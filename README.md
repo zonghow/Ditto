@@ -101,7 +101,7 @@ flowchart LR
 Send this prompt directly to your Coding Agent (**Claude Code**, **Codex**, or **OpenCode**) running on your remote Linux machine:
 
 ```text
-Follow INSTALL.md in this repository (clone it first if needed) to start Ditto via Docker, install the ditto CLI and browser skill, verify /health, and reply with the reachable http://<host-ip>:3217 URL.
+Clone https://github.com/zonghow/Ditto.git to ~/Ditto (if not already cloned), then follow ~/Ditto/INSTALL.md to start Ditto via Docker, install the ditto CLI and browser skill, verify /health, and reply with the reachable http://<host-ip>:3217 URL.
 ```
 
 #### Option B: Manual Docker Setup

@@ -101,7 +101,7 @@ flowchart LR
 把下面这句话直接发给运行在开发机上的 **Claude Code / Codex / OpenCode**：
 
 ```text
-请参考仓库中的 INSTALL.md（若本地尚未克隆请先 git clone 仓库），通过 Docker 部署 Ditto 服务并安装 ditto CLI 与浏览器 Skill，验证 /health 就绪后把连接地址发给我。
+请先将 https://github.com/zonghow/Ditto.git 克隆到 ~/Ditto（若已存在则直接进入），然后按照其中的 INSTALL.md 通过 Docker 部署 Ditto 服务、安装 ditto CLI 与浏览器 Skill，验证 /health 就绪后把连接地址发给我。
 ```
 
 #### 方式 B：手动 Docker 一键启动

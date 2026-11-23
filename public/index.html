@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="ditto-viewer" content="1">
+  <title>Ditto</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=b04-2">
+  <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png?v=b04-2">
+  <link rel="shortcut icon" href="/favicon.ico?v=b04-2">
+  <link rel="apple-touch-icon" href="/favicon.png?v=b04-2">
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/vendor/rrweb/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main>
+    <section id="login" class="login-panel" hidden>
+      <div class="login-brand"><svg class="brand-mark ditto-logo" viewBox="0 0 256 256" fill="none" aria-hidden="true"><rect width="256" height="256" rx="58" fill="#0a0b0e"/><rect class="card-rim" x="1.5" y="1.5" width="253" height="253" rx="56.5" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="2.5"/><path class="slash-frame" d="M 94.75 55.51 A 8.5 8.5 0 0 1 102.5 50.5 L 137.79 50.5 A 4.5 4.5 0 0 1 141.89 56.85 L 77.25 200.49 A 8.5 8.5 0 0 1 69.5 205.5 L 34.21 205.5 A 4.5 4.5 0 0 1 30.11 199.15 L 94.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/><path class="slash-frame" d="M 178.75 55.51 A 8.5 8.5 0 0 1 186.5 50.5 L 221.79 50.5 A 4.5 4.5 0 0 1 225.89 56.85 L 161.25 200.49 A 8.5 8.5 0 0 1 153.5 205.5 L 118.21 205.5 A 4.5 4.5 0 0 1 114.11 199.15 L 178.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/><path class="slash-ghost-2" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#6b95ff" fill-opacity="0.38"/><path class="slash-ghost-1" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff" fill-opacity="0.44"/><path class="slash-slider" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff"/></svg><span class="brand-name">ditto</span></div>
+      <span class="eyebrow">DITTO BROWSER</span>
+      <h1>输入访问凭据</h1>
+      <form id="login-form"><div class="input-row"><input id="dashboard-token" type="password" autocomplete="off" spellcheck="false" placeholder="访问凭据" required><button class="button primary" type="submit">进入</button></div></form>
+    </section>
+    <section id="workspace" hidden>
+      <section id="notice" class="notice" hidden></section>
+      <section id="overview" class="overview" aria-label="全局标签页总览" hidden>
+        <div class="section-heading">
+          <div class="heading-left">
+            <button id="overview-logo-toggle" class="brand-trigger" data-view-toggle type="button" title="返回浏览器视图" aria-label="返回浏览器视图" aria-pressed="true">
+              <svg class="brand-mark ditto-logo" viewBox="0 0 256 256" fill="none" aria-hidden="true"><rect width="256" height="256" rx="58" fill="#0a0b0e"/><rect class="card-rim" x="1.5" y="1.5" width="253" height="253" rx="56.5" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="2.5"/><path class="slash-frame" d="M 94.75 55.51 A 8.5 8.5 0 0 1 102.5 50.5 L 137.79 50.5 A 4.5 4.5 0 0 1 141.89 56.85 L 77.25 200.49 A 8.5 8.5 0 0 1 69.5 205.5 L 34.21 205.5 A 4.5 4.5 0 0 1 30.11 199.15 L 94.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/><path class="slash-frame" d="M 178.75 55.51 A 8.5 8.5 0 0 1 186.5 50.5 L 221.79 50.5 A 4.5 4.5 0 0 1 225.89 56.85 L 161.25 200.49 A 8.5 8.5 0 0 1 153.5 205.5 L 118.21 205.5 A 4.5 4.5 0 0 1 114.11 199.15 L 178.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/><path class="slash-ghost-2" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#6b95ff" fill-opacity="0.38"/><path class="slash-ghost-1" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff" fill-opacity="0.44"/><path class="slash-slider" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff"/></svg>
+            </button>
+            <h2>全部标签页</h2>
+            <span id="overview-count" class="overview-count">0</span>
+          </div>
+          <div class="heading-actions">
+            <label class="toggle-switch" title="根据标签页数量自动排布并铺满屏幕">
+              <input id="overview-adaptive" type="checkbox" checked>
+              <span class="toggle-track" aria-hidden="true"></span>
+              <span class="toggle-label">自适应布局</span>
+            </label>
+            <button id="overview-close-others" class="button quiet" type="button">关闭其他</button>
+            <button id="overview-new-tab" class="button secondary" type="button">＋ 新建标签页</button>
+            <button id="overview-drawer-toggle" class="icon-button drawer-gear" data-drawer-trigger type="button" title="打开 Ditto 设置" aria-label="打开 Ditto 设置" aria-expanded="false" aria-controls="control-drawer">
+              <svg class="gear-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+              <span class="brand-dot" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+        <div id="tab-overview" class="thumbnail-grid"></div>
+      </section>
+      <section class="viewer browser-shell" aria-label="远程浏览器">
+        <div class="tab-strip">
+          <div class="tab-strip-head">
+            <button id="logo-toggle" class="brand-trigger" data-view-toggle type="button" title="全部标签页总览" aria-label="全部标签页总览" aria-pressed="false">
+              <svg class="brand-mark ditto-logo" viewBox="0 0 256 256" fill="none" aria-hidden="true"><rect width="256" height="256" rx="58" fill="#0a0b0e"/><rect class="card-rim" x="1.5" y="1.5" width="253" height="253" rx="56.5" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="2.5"/><path class="slash-frame" d="M 94.75 55.51 A 8.5 8.5 0 0 1 102.5 50.5 L 137.79 50.5 A 4.5 4.5 0 0 1 141.89 56.85 L 77.25 200.49 A 8.5 8.5 0 0 1 69.5 205.5 L 34.21 205.5 A 4.5 4.5 0 0 1 30.11 199.15 L 94.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/><path class="slash-frame" d="M 178.75 55.51 A 8.5 8.5 0 0 1 186.5 50.5 L 221.79 50.5 A 4.5 4.5 0 0 1 225.89 56.85 L 161.25 200.49 A 8.5 8.5 0 0 1 153.5 205.5 L 118.21 205.5 A 4.5 4.5 0 0 1 114.11 199.15 L 178.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/><path class="slash-ghost-2" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#6b95ff" fill-opacity="0.38"/><path class="slash-ghost-1" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff" fill-opacity="0.44"/><path class="slash-slider" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff"/></svg>
+            </button>
+            <span class="tab-strip-label">标签页</span>
+            <button id="drawer-toggle" class="icon-button drawer-gear" data-drawer-trigger type="button" title="打开 Ditto 设置" aria-label="打开 Ditto 设置" aria-expanded="false" aria-controls="control-drawer">
+              <svg class="gear-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+              <span class="brand-dot" aria-hidden="true"></span>
+            </button>
+          </div>
+          <div id="tab-list" role="tablist" aria-label="Chromium 标签页" aria-orientation="horizontal"></div>
+          <button id="new-tab" class="icon-button new-tab" type="button" title="新建标签页" aria-label="新建标签页"><span class="new-tab-plus" aria-hidden="true">＋</span><span class="new-tab-label">新建标签页</span></button>
+        </div>
+        <div class="browser-main">
+          <div class="address-toolbar">
+            <div class="navigation-buttons">
+              <button id="back-tab" class="icon-button" type="button" title="后退" aria-label="后退" disabled>←</button>
+              <button id="forward-tab" class="icon-button" type="button" title="前进" aria-label="前进" disabled>→</button>
+              <button id="reload-tab" class="icon-button" type="button" title="刷新" aria-label="刷新网页" disabled>↻</button>
+            </div>
+            <div class="address-box">
+              <form id="address-form" class="address-form">
+                <span id="address-icon" aria-hidden="true">◇</span>
+                <input id="address-bar" type="text" inputmode="url" autocomplete="off" spellcheck="false" aria-label="地址栏" aria-autocomplete="list" aria-controls="address-suggestions" aria-expanded="false" placeholder="输入网址并回车" disabled>
+                <button class="icon-button go-button" type="submit" title="访问" aria-label="访问地址">↵</button>
+              </form>
+              <div id="address-suggestions" class="address-suggestions" role="listbox" aria-label="历史记录匹配" hidden></div>
+            </div>
+            <details class="browser-menu">
+              <summary class="icon-button" aria-label="更多操作" title="更多操作">⋮</summary>
+              <div class="browser-menu-panel">
+                <button id="request-cookies" class="menu-item" type="button" disabled>从主力机重新同步 Cookie</button>
+                <button id="reopen-tab" class="menu-item" type="button" disabled>在新标签页重新打开</button>
+                <button id="copy-selection" class="menu-item" type="button" disabled>复制远端选中文本</button>
+                <button id="upload-file" class="menu-item" type="button" disabled>上传文件到当前页</button>
+              </div>
+            </details>
+            <input id="remote-file-upload" type="file" hidden>
+            <div id="tab-progress" class="tab-progress" aria-hidden="true"></div>
+          </div>
+          <div class="stage">
+            <div class="replay-viewport">
+              <div id="main-replay" hidden></div>
+              <div id="control-surface" tabindex="0" role="application" aria-label="远端网页操作区域" hidden></div>
+              <textarea id="remote-editor" autocomplete="off" spellcheck="false" aria-label="远端网页输入" hidden></textarea>
+              <select id="remote-select" aria-label="远端下拉选项" hidden></select>
+            </div>
+            <div id="screencast-stage" class="screencast-stage" hidden>
+              <canvas id="screencast-canvas" tabindex="0" role="application" aria-label="远端画面直连区域"></canvas>
+            </div>
+            <div id="empty-frame">
+              <span class="empty-icon">◫</span>
+              <h2 id="empty-title">新标签页</h2>
+              <p id="empty-description" class="muted">在上方地址栏输入网址访问</p>
+            </div>
+            <div id="xorigin-banner" class="xorigin-banner" role="status" hidden>
+              <span id="xorigin-banner-text">当前页面包含跨域内嵌内容，DOM 回放模式无法显示</span>
+              <button id="xorigin-switch-screencast" class="button primary xorigin-btn" type="button">切换画面直连</button>
+              <button id="xorigin-dismiss" class="icon-button xorigin-close" type="button" title="忽略" aria-label="忽略提示">×</button>
+            </div>
+            <span id="operation-status" role="status" aria-live="polite"></span>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+  <aside id="control-drawer" class="control-drawer" aria-label="Ditto 控制面板" aria-hidden="true">
+    <div class="drawer-header">
+      <div class="brand"><svg class="brand-mark ditto-logo" viewBox="0 0 256 256" fill="none" aria-hidden="true"><rect width="256" height="256" rx="58" fill="#0a0b0e"/><rect class="card-rim" x="1.5" y="1.5" width="253" height="253" rx="56.5" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="2.5"/><path class="slash-frame" d="M 94.75 55.51 A 8.5 8.5 0 0 1 102.5 50.5 L 137.79 50.5 A 4.5 4.5 0 0 1 141.89 56.85 L 77.25 200.49 A 8.5 8.5 0 0 1 69.5 205.5 L 34.21 205.5 A 4.5 4.5 0 0 1 30.11 199.15 L 94.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/><path class="slash-frame" d="M 178.75 55.51 A 8.5 8.5 0 0 1 186.5 50.5 L 221.79 50.5 A 4.5 4.5 0 0 1 225.89 56.85 L 161.25 200.49 A 8.5 8.5 0 0 1 153.5 205.5 L 118.21 205.5 A 4.5 4.5 0 0 1 114.11 199.15 L 178.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/><path class="slash-ghost-2" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#6b95ff" fill-opacity="0.38"/><path class="slash-ghost-1" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff" fill-opacity="0.44"/><path class="slash-slider" d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff"/></svg><span class="brand-name">ditto</span></div>
+      <button id="drawer-close" class="icon-button" type="button" title="关闭" aria-label="关闭抽屉">×</button>
+    </div>
+    <div class="drawer-body">
+      <div id="drawer-alerts" class="drawer-alerts" hidden>
+        <span id="browser-caption" class="status-pill" hidden></span>
+        <span id="extension-badge" class="status-pill error" hidden><span class="dot"></span><span>扩展未连接</span></span>
+        <span id="connection" class="status-pill error" hidden><span class="dot"></span><span>连接中断</span></span>
+      </div>
+
+      <section class="drawer-section">
+        <div class="drawer-row">
+          <span class="drawer-label">视图</span>
+          <div id="view-switcher" class="segmented" role="group" aria-label="视图切换">
+            <button type="button" class="seg-option active" data-view="browser" aria-pressed="true">普通</button>
+            <button type="button" class="seg-option" data-view="overview" aria-pressed="false">总览</button>
+          </div>
+        </div>
+        <div class="drawer-row drawer-row-layout">
+          <span class="drawer-label">标签栏</span>
+          <div id="tab-layout-switcher" class="segmented" role="group" aria-label="标签栏方向">
+            <button type="button" class="seg-option active" data-layout="horizontal" aria-pressed="true">横向</button>
+            <button type="button" class="seg-option" data-layout="vertical" aria-pressed="false">竖向</button>
+          </div>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">主题</span>
+          <div id="theme-switcher" class="segmented" role="group" aria-label="主题切换">
+            <button type="button" class="seg-option theme-option" data-theme-value="system" title="跟随系统主题" aria-label="跟随系统主题" aria-pressed="false"></button>
+            <button type="button" class="seg-option theme-option" data-theme-value="light" title="浅色主题" aria-label="浅色主题" aria-pressed="false"></button>
+            <button type="button" class="seg-option theme-option active" data-theme-value="dark" title="深色主题" aria-label="深色主题" aria-pressed="true"></button>
+          </div>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">视口</span>
+          <div id="viewport-mode-switcher" class="segmented" role="group" aria-label="远端视口模式">
+            <button type="button" class="seg-option active" data-viewport-mode="adaptive" aria-pressed="true">自适应</button>
+            <button type="button" class="seg-option" data-viewport-mode="fixed" aria-pressed="false">1080p</button>
+          </div>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label" title="全局开启画面直连模式（支持跨域登录框、Canvas 验证码与滑块拖拽）">画面直连</span>
+          <label class="toggle-switch drawer-switch" title="全局切换画面直连模式（对所有标签页生效）">
+            <input id="screencast-toggle" type="checkbox" role="switch" aria-label="全局开启画面直连模式">
+            <span class="toggle-track" aria-hidden="true"></span>
+          </label>
+        </div>
+      </section>
+
+      <section id="agent-sessions-section" class="drawer-section" hidden>
+        <div class="drawer-section-title">活跃 Agent</div>
+        <div id="agent-sessions" class="agent-sessions" aria-label="活跃 Agent 会话"></div>
+      </section>
+
+      <section id="downloads-section" class="drawer-section" hidden>
+        <div class="drawer-section-title">远端下载</div>
+        <div id="downloads-list" class="downloads-list" aria-label="远端下载文件列表"></div>
+      </section>
+
+      <section id="memory-section" class="drawer-section">
+        <button id="memory-toggle" class="memory-summary-btn" type="button" aria-expanded="false" aria-controls="memory-details">
+          <span class="drawer-label">内存占用</span>
+          <span class="memory-summary-right">
+            <span id="memory-total" class="memory-value">--</span>
+            <svg class="memory-caret" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2.5 3.75 5 6.25l2.5-2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </button>
+        <div id="memory-bar" class="memory-bar" aria-hidden="true"></div>
+        <div id="memory-details" class="memory-details" hidden>
+          <div class="memory-meta-row">
+            <span id="memory-meta" class="muted">正在统计…</span>
+            <button id="memory-refresh" class="memory-refresh-btn" type="button" title="刷新内存统计" aria-label="刷新内存统计">↻</button>
+          </div>
+          <div id="memory-categories" class="memory-categories"></div>
+          <div id="memory-node-stats" class="memory-node-stats"></div>
+          <div class="memory-subhead">进程明细</div>
+          <div id="memory-processes" class="memory-processes"></div>
+        </div>
+      </section>
+
+      <section id="settings" class="drawer-section">
+        <div class="drawer-section-title">连接配置</div>
+        <div class="endpoint-box"><code id="service-endpoint"></code><button id="copy-pairing" class="button primary" type="button">复制地址</button></div>
+        <div id="sync-status" class="sync-status muted">尚未接收登录态</div>
+        <ul id="sync-warnings" class="warnings"></ul>
+        <details class="compact-details"><summary>CookieCloud 兼容参数</summary><div class="cc-actions"><button id="show-cookiecloud" class="button secondary" type="button">显示配置</button></div><pre id="cookiecloud-config" hidden></pre></details>
+      </section>
+    </div>
+    <div id="drawer-footer" class="drawer-footer" hidden>
+      <button id="logout" class="button quiet drawer-logout" type="button">退出登录</button>
+    </div>
+  </aside>
+
+  <div id="tab-context-menu" class="tab-context-menu" role="menu" aria-label="标签页菜单" hidden>
+    <button id="ctx-new-adjacent" class="ctx-item" type="button" role="menuitem">在右侧新增标签页</button>
+    <div class="ctx-divider" role="separator"></div>
+    <button id="ctx-reload" class="ctx-item" type="button" role="menuitem">重新加载</button>
+    <button id="ctx-duplicate" class="ctx-item" type="button" role="menuitem">复制</button>
+    <div id="ctx-layout-divider" class="ctx-divider" role="separator"></div>
+    <button id="ctx-toggle-layout" class="ctx-item" type="button" role="menuitem">垂直显示标签页</button>
+    <div class="ctx-divider" role="separator"></div>
+    <button id="ctx-close" class="ctx-item" type="button" role="menuitem">关闭</button>
+    <button id="ctx-close-others" class="ctx-item" type="button" role="menuitem">关闭其他标签页</button>
+    <button id="ctx-close-after" class="ctx-item" type="button" role="menuitem">关闭右侧标签页</button>
+  </div>
+
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

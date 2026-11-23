@@ -1,0 +1,11 @@
+node_modules/
+.local/
+.env
+.env.*
+!.env.example
+artifacts/
+.playwright-mcp/
+coverage/
+logs/
+*.log
+.DS_Store

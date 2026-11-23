@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 216" fill="none" role="img" aria-label="Ditto — Browser Bridge for Remote Coding Agents">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="880" y2="216" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0b0d12"/>
+      <stop offset="55%" stop-color="#10131c"/>
+      <stop offset="100%" stop-color="#0a0c10"/>
+    </linearGradient>
+    <radialGradient id="glow-blue" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(155 108) rotate(12) scale(240 130)">
+      <stop offset="0%" stop-color="#6b95ff" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#6b95ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-right" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(760 40) scale(210 140)">
+      <stop offset="0%" stop-color="#34d399" stop-opacity="0.11"/>
+      <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M 28 0 L 0 0 0 28" fill="none" stroke="#ffffff" stroke-opacity="0.032" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect x="0.75" y="0.75" width="878.5" height="214.5" rx="22" fill="url(#bg)" stroke="#ffffff" stroke-opacity="0.12" stroke-width="1.5"/>
+  <rect x="1" y="1" width="878" height="214" rx="22" fill="url(#grid)"/>
+  <rect x="1" y="1" width="878" height="214" rx="22" fill="url(#glow-blue)"/>
+  <rect x="1" y="1" width="878" height="214" rx="22" fill="url(#glow-right)"/>
+
+  <!-- Bauhaus Twin-Slash Ditto Emblem -->
+  <g transform="translate(64 52) scale(0.4375)">
+    <rect width="256" height="256" rx="58" fill="#0a0b0e"/>
+    <rect x="1.5" y="1.5" width="253" height="253" rx="56.5" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="3"/>
+    <path d="M 116.82 52.84 A 15 15 0 0 1 130.5 44 L 165.79 44 A 11 11 0 0 1 175.82 59.51 L 111.18 203.16 A 15 15 0 0 1 97.5 212 L 62.21 212 A 11 11 0 0 1 52.18 196.49 L 116.82 52.84 Z" fill="#6b95ff" fill-opacity="0.32"/>
+    <path d="M 88.82 52.84 A 15 15 0 0 1 102.5 44 L 137.79 44 A 11 11 0 0 1 147.82 59.51 L 83.18 203.16 A 15 15 0 0 1 69.5 212 L 34.21 212 A 11 11 0 0 1 24.18 196.49 L 88.82 52.84 Z" fill="#ffffff"/>
+    <path d="M 178.75 55.51 A 8.5 8.5 0 0 1 186.5 50.5 L 221.79 50.5 A 4.5 4.5 0 0 1 225.89 56.85 L 161.25 200.49 A 8.5 8.5 0 0 1 153.5 205.5 L 118.21 205.5 A 4.5 4.5 0 0 1 114.11 199.15 L 178.75 55.51 Z" stroke="#ffffff" stroke-width="13" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Wordmark & Tagline -->
+  <text x="204" y="102" fill="#ffffff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="52" font-weight="750" letter-spacing="-1.8">ditto</text>
+  <rect x="336" y="72" width="132" height="26" rx="13" fill="#6b95ff" fill-opacity="0.14" stroke="#6b95ff" stroke-opacity="0.38" stroke-width="1"/>
+  <text x="402" y="89.5" text-anchor="middle" fill="#9bb8ff" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="11.5" font-weight="600" letter-spacing="0.4">BROWSER BRIDGE</text>
+
+  <text x="204" y="138" fill="#c8cbd6" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="17" font-weight="450">Give remote coding agents a real logged-in Chromium — even offline.</text>
+
+  <!-- Feature Pills -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="11.5" font-weight="500">
+    <rect x="204" y="156" width="152" height="26" rx="7" fill="#ffffff" fill-opacity="0.055" stroke="#ffffff" stroke-opacity="0.11"/>
+    <circle cx="219" cy="169" r="3.5" fill="#34d399"/>
+    <text x="230" y="173" fill="#d4d7e2">Cookie + Storage</text>
+
+    <rect x="366" y="156" width="152" height="26" rx="7" fill="#ffffff" fill-opacity="0.055" stroke="#ffffff" stroke-opacity="0.11"/>
+    <circle cx="381" cy="169" r="3.5" fill="#6b95ff"/>
+    <text x="392" y="173" fill="#d4d7e2">rrweb + CDP Live</text>
+
+    <rect x="528" y="156" width="152" height="26" rx="7" fill="#ffffff" fill-opacity="0.055" stroke="#ffffff" stroke-opacity="0.11"/>
+    <circle cx="543" cy="169" r="3.5" fill="#f5a524"/>
+    <text x="554" y="173" fill="#d4d7e2">Multi-Agent Tabs</text>
+
+    <rect x="690" y="156" width="146" height="26" rx="7" fill="#ffffff" fill-opacity="0.055" stroke="#ffffff" stroke-opacity="0.11"/>
+    <circle cx="705" cy="169" r="3.5" fill="#a78bfa"/>
+    <text x="716" y="173" fill="#d4d7e2">Zero Build Step</text>
+  </g>
+</svg>

@@ -1,0 +1,32 @@
+services:
+  ditto:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DITTO_APT_MIRROR: ${DITTO_APT_MIRROR:-}
+        DITTO_NPM_REGISTRY: ${DITTO_NPM_REGISTRY:-}
+    image: ditto-browser:latest
+    container_name: ditto-browser
+    restart: unless-stopped
+    init: true
+    shm_size: "1gb"
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "${DITTO_PORT:-3217}:3217"
+    environment:
+      DITTO_HOST: 0.0.0.0
+      DITTO_PORT: 3217
+      DITTO_CDP_PORT: 9222
+      DITTO_UID: ${DITTO_UID:-1000}
+      DITTO_GID: ${DITTO_GID:-1000}
+      DITTO_LOG_FILE: /logs/ditto.log
+      DITTO_DEMO: ${DITTO_DEMO:-0}
+      DITTO_AUTH: ${DITTO_AUTH:-0}
+    volumes:
+      - ditto-data:/data
+      - ${DITTO_LOG_DIR:-./logs}:/logs
+
+volumes:
+  ditto-data:

@@ -1,0 +1,388 @@
+#!/usr/bin/env sh
+set -eu
+
+# Portable zero-dependency CLI for Ditto Browser Bridge.
+# Uses python3 (preinstalled on Linux/macOS devboxes) or node as fallback.
+
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 - "$@" <<'PY'
+import base64
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+BASE = os.environ.get("DITTO_URL", f"http://127.0.0.1:{os.environ.get('DITTO_PORT', '3217')}").rstrip("/")
+TOKEN = os.environ.get("DITTO_TOKEN", "").strip()
+
+USAGE = """Usage: ditto <command> [args] [options]
+
+Commands:
+  status                                    Check browser, extension connection, and sync status
+  tabs                                      List open browser tabs
+  open <url> [--no-wait-sync]               Open URL in a new tab (auto-syncs login state if extension is online)
+  goto <url> [--tab <id>]                   Navigate existing tab to URL
+  snapshot [--tab <id>] [--limit N]         Read page text and interactive refs (@e1, ... incl. Shadow DOM & same-origin iframes)
+  click <@ref|selector> [--tab <id>]        Click an interactive @ref or Playwright selector
+  hover <@ref|selector> [--tab <id>]        Hover an interactive @ref or Playwright selector
+  fill <@ref|selector> <text>               Fill an input/textarea
+  type <text> [--target <ref|sel>]          Type text via keyboard
+  select <@ref|selector> <value>            Select option value on <select>
+  press <key> [--target <ref|sel>]          Press a key (e.g. Enter, Escape, Tab)
+  scroll [up|down|left|right|top|bottom|px] Scroll page or [--target <@ref|sel>] container
+  upload <@ref|selector> <file...>          Upload local file(s) to an input[type=file]
+  wait [selector|ms] [--text T] [--url U]   Wait for selector, text, URL substring, [--networkidle], or ms
+  dialog <accept|dismiss> [promptText]      Handle native alert / confirm / prompt / beforeunload dialog
+  console [--limit N] [--clear]             Show recent console logs and uncaught page errors
+  network [--all] [--limit N] [--clear]     Show recent failed (or --all) network requests
+  eval <js> [--tab <id>]                    Evaluate JavaScript expression in page
+  sync [url] [--tab <id>]                   Request fresh Cookies from user's Chrome extension and reload
+  reload | back | forward | close           Tab navigation/lifecycle actions (--tab <id>)
+  activate <tabId>                          Bring specified tab to front
+  screenshot [path] [--full-page]           Save PNG screenshot (default: /tmp/ditto-screenshot.png)
+
+Options:
+  --tab <id|index>                          Target tab UUID, prefix, or 1-based index
+  --full-page                               Capture full scrollable page in screenshot
+  --limit <n>                               Max elements/entries returned
+  --max-chars <n>                           Max body text chars in snapshot (default: 8000)
+  --timeout <ms>                            Timeout in ms for wait/actions
+"""
+
+BOOL_FLAGS = ("--no-wait-sync", "--full-page", "--clear", "--all", "--networkidle")
+VALUE_FLAGS = ("--tab", "--session", "--agent", "--target", "--limit", "--max-chars", "--timeout", "--text", "--url")
+
+def parse_args(argv):
+    opts = {}
+    pos = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-h", "--help"):
+            opts["help"] = True
+            i += 1
+        elif arg in BOOL_FLAGS:
+            opts[arg[2:]] = True
+            i += 1
+        elif arg in VALUE_FLAGS and i + 1 < len(argv):
+            opts[arg[2:]] = argv[i + 1]
+            i += 2
+        elif arg.startswith("--") and "=" in arg:
+            k, v = arg[2:].split("=", 1)
+            opts[k] = v
+            i += 1
+        else:
+            pos.append(arg)
+            i += 1
+    return pos, opts
+
+def classify_agent(text):
+    low = (text or "").lower()
+    if "claude" in low:
+        return "claude"
+    if "codex" in low:
+        return "codex"
+    if "opencode" in low:
+        return "opencode"
+    if "cursor" in low:
+        return "cursor"
+    if "antigravity" in low:
+        return "antigravity"
+    return ""
+
+def inspect_caller(explicit_session=None, explicit_agent=None):
+    agent = (explicit_agent or os.environ.get("DITTO_AGENT", "")).strip().lower()
+    if not agent:
+        if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_ENTRYPOINT") or os.environ.get("CLAUDE_SESSION_ID"):
+            agent = "claude"
+        elif os.environ.get("CODEX_CI") or os.environ.get("CODEX_MANAGED_BY_NPM") or os.environ.get("CODEX_SANDBOX_NETWORK_DISABLED") or os.environ.get("CODEX_THREAD_ID"):
+            agent = "codex"
+        elif os.environ.get("OPENCODE") or os.environ.get("OPENCODE_SESSION_ID"):
+            agent = "opencode"
+
+    anchor = ""
+    pid = os.getppid()
+    seen = set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        comm = ""
+        cmdline = ""
+        ppid = 0
+        stat_path = f"/proc/{pid}/stat"
+        if os.path.exists(stat_path):
+            try:
+                with open(stat_path, "r") as f:
+                    raw = f.read()
+                lp, rp = raw.find("("), raw.rfind(")")
+                comm = raw[lp + 1:rp]
+                ppid = int(raw[rp + 2:].split()[1])
+                with open(f"/proc/{pid}/cmdline", "rb") as cf:
+                    cmdline = cf.read().replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+            except Exception:
+                break
+        else:
+            try:
+                out = subprocess.check_output(["ps", "-o", "ppid=,command=", "-p", str(pid)], stderr=subprocess.DEVNULL).decode("utf-8", errors="ignore").strip()
+                if not out:
+                    break
+                parts = out.split(None, 1)
+                ppid = int(parts[0])
+                cmdline = parts[1] if len(parts) > 1 else ""
+                comm = cmdline.split()[0] if cmdline else ""
+            except Exception:
+                break
+        detected = classify_agent(f"{comm} {cmdline}")
+        if detected:
+            if not agent:
+                agent = detected
+            if not anchor:
+                anchor = f"{detected}:{pid}"
+            break
+        pid = ppid
+
+    session = (explicit_session or "").strip()
+    if not session:
+        for env_name in ("DITTO_SESSION", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "OPENCODE_SESSION_ID"):
+            val = os.environ.get(env_name, "").strip()
+            if val:
+                session = f"{env_name.lower()}:{val}"
+                break
+    if not session:
+        if not anchor:
+            try:
+                anchor = f"sid:{os.getsid(0)}"
+            except Exception:
+                anchor = f"ppid:{os.getppid()}"
+        session = f"{anchor}:{os.getcwd()}"[:180]
+
+    workspace = os.path.basename(os.getcwd().rstrip("/")) or "root"
+    return session, (agent or "terminal"), workspace[:48]
+
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+SESSION_ID = ""
+AGENT_NAME = ""
+WORKSPACE = ""
+
+def request(method, route, payload=None, timeout=30):
+    headers = {"Accept": "application/json"}
+    if TOKEN:
+        headers["Authorization"] = f"Bearer {TOKEN}"
+    if SESSION_ID:
+        headers["X-Ditto-Session"] = SESSION_ID
+    if AGENT_NAME:
+        headers["X-Ditto-Agent"] = AGENT_NAME
+    if WORKSPACE:
+        headers["X-Ditto-Workspace"] = urllib.parse.quote(WORKSPACE)
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"{BASE}{route}", data=data, headers=headers, method=method)
+    try:
+        with OPENER.open(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as err:
+        raw = err.read().decode("utf-8", errors="replace")
+        try:
+            body = json.loads(raw)
+        except Exception:
+            body = {"ok": False, "error": raw or f"HTTP {err.code}"}
+        body.setdefault("ok", False)
+        print(json.dumps(body, ensure_ascii=False, indent=2))
+        sys.exit(1)
+    except (urllib.error.URLError, OSError) as err:
+        reason = getattr(err, "reason", None) or str(err)
+        print(json.dumps({
+            "ok": False,
+            "error": f"无法连接 Ditto 服务 ({BASE}): {reason}。请确认容器或服务已启动。",
+        }, ensure_ascii=False, indent=2))
+        sys.exit(1)
+
+def main():
+    global SESSION_ID, AGENT_NAME, WORKSPACE
+    pos, opts = parse_args(sys.argv[1:])
+    if opts.get("help") or not pos:
+        print(USAGE.strip())
+        sys.exit(0 if opts.get("help") else 1)
+
+    SESSION_ID, AGENT_NAME, WORKSPACE = inspect_caller(opts.get("session"), opts.get("agent"))
+    cmd = pos[0]
+    rest = pos[1:]
+    tab_id = opts.get("tab") or os.environ.get("DITTO_TAB", "").strip() or None
+
+    if cmd == "status":
+        out = request("GET", "/api/agent/status")
+    elif cmd == "tabs":
+        st = request("GET", "/api/agent/status")
+        active = st.get("activeTabId")
+        tabs = [
+            {
+                "index": idx + 1,
+                "id": t.get("id"),
+                "shortId": t.get("shortId") or (t.get("id") or "")[:8],
+                "mine": bool(t.get("mine")),
+                "active": t.get("id") == active,
+                "title": t.get("title"),
+                "url": t.get("url"),
+            }
+            for idx, t in enumerate(st.get("tabs", []))
+        ]
+        out = {
+            "ok": True,
+            "extensionConnected": st.get("extensionConnected", False),
+            "sessionTabId": st.get("sessionTabId"),
+            "tabs": tabs,
+        }
+    elif cmd == "open":
+        url = rest[0] if rest else "about:blank"
+        out = request("POST", "/api/agent/open", {
+            "url": url,
+            "waitSync": not opts.get("no-wait-sync", False),
+        }, timeout=35)
+    elif cmd == "goto":
+        if not rest:
+            sys.exit("Usage: ditto goto <url> [--tab <id>]")
+        out = request("POST", "/api/agent/act", {
+            "tabId": tab_id,
+            "action": "navigate",
+            "url": rest[0],
+            "waitSync": not opts.get("no-wait-sync", False),
+        }, timeout=35)
+    elif cmd == "snapshot":
+        payload = {"tabId": tab_id}
+        if "limit" in opts:
+            payload["limit"] = int(opts["limit"])
+        if "max-chars" in opts:
+            payload["maxChars"] = int(opts["max-chars"])
+        out = request("POST", "/api/agent/snapshot", payload)
+    elif cmd in ("click", "hover"):
+        if not rest:
+            sys.exit(f"Usage: ditto {cmd} <@ref|selector> [--tab <id>]")
+        out = request("POST", "/api/agent/act", {"tabId": tab_id, "action": cmd, "target": rest[0]})
+    elif cmd in ("fill", "select"):
+        if len(rest) < 2:
+            sys.exit(f"Usage: ditto {cmd} <@ref|selector> <value> [--tab <id>]")
+        out = request("POST", "/api/agent/act", {
+            "tabId": tab_id, "action": cmd, "target": rest[0], "value": " ".join(rest[1:]),
+        })
+    elif cmd == "type":
+        if not rest:
+            sys.exit("Usage: ditto type <text> [--target <@ref|selector>] [--tab <id>]")
+        out = request("POST", "/api/agent/act", {
+            "tabId": tab_id, "action": "type", "target": opts.get("target"), "value": " ".join(rest),
+        })
+    elif cmd == "press":
+        if not rest:
+            sys.exit("Usage: ditto press <key> [--target <@ref|selector>] [--tab <id>]")
+        out = request("POST", "/api/agent/act", {
+            "tabId": tab_id, "action": "press", "target": opts.get("target"), "key": rest[0],
+        })
+    elif cmd == "scroll":
+        payload = {"tabId": tab_id, "action": "scroll"}
+        if opts.get("target"):
+            payload["target"] = opts["target"]
+        if rest:
+            first = rest[0].lower()
+            if first in ("up", "down", "left", "right", "top", "bottom"):
+                payload["direction"] = first
+                if len(rest) > 1:
+                    try:
+                        amount = int(rest[1])
+                        if first in ("left", "right"):
+                            payload["deltaX"] = amount
+                        else:
+                            payload["deltaY"] = amount
+                    except ValueError:
+                        pass
+            else:
+                try:
+                    payload["deltaY"] = int(first)
+                except ValueError:
+                    sys.exit("Usage: ditto scroll [up|down|left|right|top|bottom|px] [amount] [--target <@ref|sel>] [--tab <id>]")
+        out = request("POST", "/api/agent/act", payload)
+    elif cmd == "upload":
+        if len(rest) < 2:
+            sys.exit("Usage: ditto upload <@ref|selector> <filePath...> [--tab <id>]")
+        files = [os.path.abspath(p) for p in rest[1:]]
+        out = request("POST", "/api/agent/act", {
+            "tabId": tab_id, "action": "upload", "target": rest[0], "files": files,
+        })
+    elif cmd == "dialog":
+        if not rest or rest[0] not in ("accept", "dismiss"):
+            sys.exit("Usage: ditto dialog <accept|dismiss> [promptText] [--tab <id>]")
+        action = "accept-dialog" if rest[0] == "accept" else "dismiss-dialog"
+        payload = {"tabId": tab_id, "action": action}
+        if len(rest) > 1:
+            payload["promptText"] = " ".join(rest[1:])
+        out = request("POST", "/api/agent/act", payload)
+    elif cmd == "console":
+        payload = {"tabId": tab_id, "clear": bool(opts.get("clear", False))}
+        if "limit" in opts:
+            payload["limit"] = int(opts["limit"])
+        out = request("POST", "/api/agent/console", payload)
+    elif cmd == "network":
+        payload = {
+            "tabId": tab_id,
+            "failedOnly": not bool(opts.get("all", False)),
+            "clear": bool(opts.get("clear", False)),
+        }
+        if "limit" in opts:
+            payload["limit"] = int(opts["limit"])
+        out = request("POST", "/api/agent/network", payload)
+    elif cmd == "wait":
+        payload = {"tabId": tab_id, "action": "wait", "timeout": int(opts.get("timeout", "8000"))}
+        if opts.get("networkidle"):
+            payload["networkIdle"] = True
+        elif opts.get("text"):
+            payload["text"] = opts["text"]
+        elif opts.get("url"):
+            payload["url"] = opts["url"]
+        elif rest:
+            if rest[0].isdigit():
+                payload["timeout"] = int(rest[0])
+            else:
+                payload["target"] = rest[0]
+        else:
+            payload["timeout"] = 1000
+        out = request("POST", "/api/agent/act", payload, timeout=max(30, payload["timeout"] // 1000 + 10))
+    elif cmd == "eval":
+        if not rest:
+            sys.exit("Usage: ditto eval <javascript> [--tab <id>]")
+        out = request("POST", "/api/agent/eval", {"tabId": tab_id, "expression": " ".join(rest)})
+    elif cmd == "sync":
+        payload = {"tabId": tab_id}
+        if rest:
+            payload["url"] = rest[0]
+        out = request("POST", "/api/agent/sync", payload, timeout=25)
+    elif cmd in ("reload", "back", "forward", "close"):
+        out = request("POST", "/api/agent/act", {"tabId": tab_id, "action": cmd})
+    elif cmd == "activate":
+        target_tab = rest[0] if rest else tab_id
+        if not target_tab:
+            sys.exit("Usage: ditto activate <tabId>")
+        out = request("POST", "/api/agent/act", {"tabId": target_tab, "action": "activate"})
+    elif cmd == "screenshot":
+        dest = os.path.abspath(rest[0] if rest else "/tmp/ditto-screenshot.png")
+        res = request("POST", "/api/agent/screenshot", {
+            "tabId": tab_id, "fullPage": bool(opts.get("full-page", False)),
+        })
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "wb") as f:
+            f.write(base64.b64decode(res["pngBase64"]))
+        out = {"ok": True, "path": dest}
+    else:
+        print(f"Unknown command: {cmd}\n\n{USAGE.strip()}", file=sys.stderr)
+        sys.exit(1)
+
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+if __name__ == "__main__":
+    main()
+PY
+fi
+
+echo '{"ok":false,"error":"python3 is required to run ditto CLI."}' >&2
+exit 1

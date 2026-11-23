@@ -1,0 +1,60 @@
+{
+  "name": "ditto-browser-bridge",
+  "version": "0.2.0",
+  "private": true,
+  "license": "MIT",
+  "homepage": "https://github.com/zonghow/Ditto#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zonghow/Ditto.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zonghow/Ditto/issues"
+  },
+  "description": "Give remote Linux coding agents a real logged-in Chromium with offline-resilient Cookie/Storage sync, multi-agent tab isolation, and a live rrweb + CDP web console.",
+  "keywords": [
+    "ai-agent",
+    "coding-agent",
+    "browser-automation",
+    "chromium",
+    "playwright",
+    "rrweb",
+    "cdp",
+    "chrome-extension",
+    "cookie-sync",
+    "mcp"
+  ],
+  "type": "module",
+  "bin": {
+    "ditto": "./scripts/ditto"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "docker:up": "sh scripts/docker-up.sh",
+    "install:skill": "sh scripts/install-skill.sh",
+    "test": "node --test test/*.test.js",
+    "test:integration": "node test/integration.js",
+    "test:attach": "node test/attach-integration.js",
+    "test:extension": "node test/extension-integration.js",
+    "test:remote-extension": "node test/remote-extension.js",
+    "test:remote": "node scripts/verify-remote.js",
+    "deploy": "node scripts/deploy.js",
+    "deploy:viewer": "node scripts/deploy-viewer.js",
+    "connect": "node scripts/connect.js",
+    "disconnect": "node scripts/connect.js --disconnect",
+    "demo": "node scripts/demo.js",
+    "mcp": "node node_modules/@playwright/mcp/cli.js --cdp-endpoint http://127.0.0.1:9222 --no-webmcp --output-dir artifacts/mcp"
+  },
+  "dependencies": {
+    "@playwright/mcp": "0.0.84",
+    "@rrweb/record": "2.2.0",
+    "@rrweb/replay": "2.2.0",
+    "crypto-js": "4.2.0",
+    "express": "5.1.0",
+    "playwright": "1.64.1",
+    "ws": "8.22.1"
+  }
+}

@@ -740,6 +740,11 @@ export class LiveReplay {
     this.sequence = message.lastSequence;
     let sawMutation = false;
     for (const event of message.events) {
+      if (this.isReady && event.type === 5 && event.data?.tag === 'ditto-focus') {
+        this.activeNodeId = event.data.payload.id;
+        this.focus(this.activeNodeId, this);
+        continue;
+      }
       if (this.isReady && event.type === 5 && event.data?.tag === 'ditto-video') {
         this.paintVideo(event.data.payload);
         continue;

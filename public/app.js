@@ -227,6 +227,7 @@ const devtoolsPanel = createDevtoolsPanel({
     requestAnimationFrame(() => {
       mainPlayer?.fit();
       screencastView.fit();
+      controller.repositionEditor();
       sendViewport(false);
     });
   },
@@ -508,6 +509,11 @@ function renderMain() {
     cast: (event, replay) => {
       if (mainPlayer !== replay) return;
       if (event.type === 3 && event.data?.source === 3) controller.hideEditor();
+      else if (event.type === 3 && (event.data?.source === 0 || event.data?.source === 4) && controller.isEditing()) {
+        requestAnimationFrame(() => {
+          if (mainPlayer === replay) controller.repositionEditor();
+        });
+      }
     },
   });
 }

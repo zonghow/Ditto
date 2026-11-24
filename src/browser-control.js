@@ -233,7 +233,10 @@ export async function dispatchControl(browser, id, _revision, command) {
       if (!editable) throw new InputError('目标不是可输入字段；文件和隐藏字段不允许从回放操作。');
       if (command.action === 'input') await element.fill(command.value, { timeout: 2500 });
       else {
-        const alreadyFocused = await element.evaluate(node => node.ownerDocument.activeElement === node || node.getRootNode().activeElement === node);
+        const alreadyFocused = await element.evaluate(node => {
+          const matches = cur => Boolean(cur && (cur === node || cur.contains?.(node) || node.contains?.(cur)));
+          return matches(node.ownerDocument.activeElement) || matches(node.getRootNode?.()?.activeElement);
+        });
         if (!alreadyFocused) throw new InputError('输入焦点已变化，先点击目标字段再输入。', 409);
         if (command.appendToPassword) await element.evaluate(node => {
           if (node.type === 'password') node.setSelectionRange(node.value.length, node.value.length);
@@ -244,7 +247,12 @@ export async function dispatchControl(browser, id, _revision, command) {
         try { node.setSelectionRange(selection.start, selection.end); } catch {}
       }, { start: command.selectionStart, end: command.selectionEnd });
     } else {
-      await element.focus().catch(() => {});
+      await element.evaluate(node => {
+        const matches = cur => Boolean(cur && (cur === node || cur.contains?.(node) || node.contains?.(cur)));
+        if (!matches(node.ownerDocument.activeElement) && !matches(node.getRootNode?.()?.activeElement)) {
+          node.focus?.();
+        }
+      }).catch(() => {});
       await tab.page.keyboard.press([...command.modifiers, command.key].join('+'));
     }
     return { ok: true };

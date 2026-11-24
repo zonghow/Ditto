@@ -43,7 +43,7 @@ const target = http.createServer((request, response) => {
   const cookieOK = request.headers.cookie?.includes('http_only_test=synthetic-login');
   const syntheticSvgIcon = `data:image/svg+xml;base64,${Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24"><path d="${'M0 0h32v24H0z '.repeat(1400)}" fill="#2563eb"/></svg>`).toString('base64')}`;
   response.setHeader('Content-Type', 'text/html');
-  response.end(`<!doctype html><title>Ditto synthetic login</title><link rel="stylesheet" href="/style.css"><style>body{font:20px sans-serif;background:#edf3fb;padding:35px}button,input,select{padding:8px;margin:8px 0}#scroller{width:180px;height:80px;overflow:auto;background:white}#long{height:900px}img{width:24px;height:24px}#live-video{width:64px;height:36px;display:block}</style><h1>${cookieOK ? 'Cookie restored' : 'No cookie'}</h1><div id="boot" class="fade-row"></div><button id="change">Change token</button><div><input id="text" aria-label="Synthetic input"><span id="typed"></span></div><div><select id="choice"><option value="a">Alpha</option><option value="b">Beta</option></select><span id="chosen"></span></div><div id="scroller"><div id="long">Scroll target</div></div><img id="private-image" src="/private.png"><img id="svg-icon" src="${syntheticSvgIcon}"><svg id="inline-logo" width="16" height="16"><defs><linearGradient id="SVGID_1_"><stop offset="0%" stop-color="rgb(16, 185, 129)"/></linearGradient></defs><style>.logo-fill{fill:url(#SVGID_1_)}</style><rect id="logo-rect" class="logo-fill" width="16" height="16"/></svg><canvas id="chart" width="60" height="30"></canvas><video id="live-video" muted playsinline></video><a id="next" href="/next">Next page</a><script>const cctx=document.querySelector('#chart').getContext('2d');cctx.fillStyle='rgb(220, 38, 38)';cctx.fillRect(0,0,60,30);const vsrc=document.createElement('canvas');vsrc.width=64;vsrc.height=36;const vctx=vsrc.getContext('2d');window.__setVideoColor=c=>{vctx.fillStyle=c;vctx.fillRect(0,0,64,36);};window.__setVideoColor('rgb(22, 163, 74)');const vid=document.querySelector('#live-video');if(vsrc.captureStream){const st=vsrc.captureStream(15);vid.srcObject=st;setInterval(()=>{vctx.fillRect(0,0,64,36);},120);vid.play().catch(()=>{});}document.querySelector('#boot').textContent=localStorage.getItem('synthetic_token')||'missing';document.querySelector('#change').onclick=()=>{localStorage.setItem('synthetic_token','remote-refreshed');document.querySelector('#boot').textContent='remote-refreshed';};document.querySelector('#text').oninput=e=>{document.querySelector('#typed').textContent=e.target.value;};document.querySelector('#text').onkeydown=e=>{if(e.key==='Enter')document.querySelector('#typed').textContent='Enter remote';};document.querySelector('#choice').onchange=e=>{document.querySelector('#chosen').textContent=e.target.value;};</script>`);
+  response.end(`<!doctype html><title>Ditto synthetic login</title><link rel="stylesheet" href="/style.css"><style>body{font:20px sans-serif;background:#edf3fb;padding:35px}button,input,select{padding:8px;margin:8px 0}#input-wrap{position:relative;display:inline-block}#clear-input{position:absolute;right:4px;top:50%;transform:translateY(-50%);padding:2px 6px;margin:0;font-size:12px}#rich{min-height:28px;padding:6px;background:white;border:1px solid #cbd5e1}#scroller{width:180px;height:80px;overflow:auto;background:white}#long{height:900px}img{width:24px;height:24px}#live-video{width:64px;height:36px;display:block}</style><h1>${cookieOK ? 'Cookie restored' : 'No cookie'}</h1><div id="boot" class="fade-row"></div><button id="change">Change token</button><div><span id="input-wrap"><input id="text" aria-label="Synthetic input" style="padding-right:34px"><button id="clear-input" type="button">x</button></span><span id="typed"></span></div><div id="rich" contenteditable="true"><b>Bold</b> plain</div><div><select id="choice"><option value="a">Alpha</option><option value="b">Beta</option></select><span id="chosen"></span></div><div id="scroller"><div id="long">Scroll target</div></div><img id="private-image" src="/private.png"><img id="svg-icon" src="${syntheticSvgIcon}"><svg id="inline-logo" width="16" height="16"><defs><linearGradient id="SVGID_1_"><stop offset="0%" stop-color="rgb(16, 185, 129)"/></linearGradient></defs><style>.logo-fill{fill:url(#SVGID_1_)}</style><rect id="logo-rect" class="logo-fill" width="16" height="16"/></svg><canvas id="chart" width="60" height="30"></canvas><video id="live-video" muted playsinline></video><a id="next" href="/next">Next page</a><script>const cctx=document.querySelector('#chart').getContext('2d');cctx.fillStyle='rgb(220, 38, 38)';cctx.fillRect(0,0,60,30);const vsrc=document.createElement('canvas');vsrc.width=64;vsrc.height=36;const vctx=vsrc.getContext('2d');window.__setVideoColor=c=>{vctx.fillStyle=c;vctx.fillRect(0,0,64,36);};window.__setVideoColor('rgb(22, 163, 74)');const vid=document.querySelector('#live-video');if(vsrc.captureStream){const st=vsrc.captureStream(15);vid.srcObject=st;setInterval(()=>{vctx.fillRect(0,0,64,36);},120);vid.play().catch(()=>{});}document.querySelector('#boot').textContent=localStorage.getItem('synthetic_token')||'missing';document.querySelector('#change').onclick=()=>{localStorage.setItem('synthetic_token','remote-refreshed');document.querySelector('#boot').textContent='remote-refreshed';};document.querySelector('#text').oninput=e=>{document.querySelector('#typed').textContent=e.target.value;};document.querySelector('#text').onkeydown=e=>{if(e.key==='Enter')document.querySelector('#typed').textContent='Enter remote';};document.querySelector('#clear-input').onclick=()=>{document.querySelector('#text').value='';document.querySelector('#typed').textContent='cleared-via-inline-btn';};document.querySelector('#choice').onchange=e=>{document.querySelector('#chosen').textContent=e.target.value;};</script>`);
 });
 let ws;
 try {
@@ -242,16 +242,33 @@ try {
     const editorStyle = await observer.evaluate(() => {
       const el = document.querySelector('#remote-editor');
       const cs = getComputedStyle(el);
-      return { bg: cs.backgroundColor, borderWidth: cs.borderTopWidth, ghost: el.dataset.ghost };
+      return { bg: cs.backgroundColor, borderWidth: cs.borderTopWidth, pointerEvents: cs.pointerEvents, ghost: el.dataset.ghost };
     });
     assert.equal(editorStyle.bg, 'rgba(0, 0, 0, 0)');
     assert.equal(editorStyle.borderWidth, '0px');
+    assert.equal(editorStyle.pointerEvents, 'none');
     assert.equal(editorStyle.ghost, 'false');
     await observer.locator('#remote-editor').fill('中文 through viewer');
     await freshPage.locator('#typed').filter({ hasText: '中文 through viewer' }).waitFor();
     await replay().locator('#typed').filter({ hasText: '中文 through viewer' }).waitFor();
+    // Clicking an inline clear button overlapping the focused input must pass through #remote-editor
+    await clickReplay('#clear-input');
+    await freshPage.locator('#typed').filter({ hasText: 'cleared-via-inline-btn' }).waitFor();
+    await clickReplay('#text');
+    await observer.locator('#remote-editor').waitFor({ state: 'visible' });
     await observer.locator('#remote-editor').press('Enter');
     await freshPage.locator('#typed').filter({ hasText: 'Enter remote' }).waitFor();
+    // Rich contenteditable preserves inline markup using incremental text insertion (not full fill)
+    await clickReplay('#rich');
+    await observer.locator('#remote-editor').waitFor({ state: 'visible' });
+    await observer.locator('#remote-editor').fill('rich-tail');
+    await freshPage.waitForFunction(() => {
+      const el = document.querySelector('#rich');
+      return Boolean(el?.querySelector('b')?.textContent === 'Bold' && el.textContent.includes('rich-tail'));
+    });
+    await observer.locator('#remote-editor').press('Enter');
+    assert.equal(await observer.locator('#remote-editor').isVisible(), true);
+    await observer.locator('#remote-editor').press('Escape');
     await clickReplay('#choice');
     await observer.locator('#remote-select').waitFor({ state: 'visible' });
     await observer.locator('#remote-select').selectOption('b');

@@ -1179,18 +1179,18 @@ pre { white-space: pre-wrap; margin: 8px 0 0; padding: 10px; background: var(--c
 #remote-editor {
   position: absolute; z-index: 4; max-width: 100%; margin: 0; padding: 0; resize: none;
   border: 0; outline: 0; background: transparent; color: transparent;
-  overflow: hidden; box-sizing: border-box;
+  pointer-events: none; overflow: hidden; box-sizing: border-box;
 }
 #remote-editor::selection {
   background: rgba(107, 149, 255, .28);
-}
-#remote-editor[data-ghost="true"] {
-  pointer-events: none;
 }
 #remote-editor.is-composing {
   background: var(--editor-bg, #ffffff);
   color: var(--editor-fg, #141418);
   caret-color: var(--editor-fg, #141418);
+}
+#remote-editor[data-incremental="true"]:not([data-ghost="true"]).is-composing {
+  background: transparent;
 }
 #remote-editor[data-ghost="true"].is-composing {
   min-width: 96px;

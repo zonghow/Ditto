@@ -54,6 +54,11 @@ import {
   runAgentConsole,
   runAgentNetwork,
 } from './agent-ops.js';
+import {
+  devtoolsSnapshot as runDevtoolsSnapshot,
+  devtoolsClear as runDevtoolsClear,
+  devtoolsEvaluate as runDevtoolsEvaluate,
+} from './devtools.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -357,7 +362,7 @@ export class BrowserService extends EventEmitter {
       lastWatched: false, refreshing: false, originObserved: false,
     };
     this.tabs.set(tab.id, tab);
-    attachTabDiagnostics(tab);
+    attachTabDiagnostics(tab, (kind, entry) => this.emit('devtools', { tabId: tab.id, kind, entry }));
     const currentViewport = page.viewportSize();
     if (this.viewport && (!currentViewport || currentViewport.width !== this.viewport.width || currentViewport.height !== this.viewport.height)) {
       page.setViewportSize(this.viewport).catch(() => {});
@@ -797,6 +802,9 @@ export class BrowserService extends EventEmitter {
   agentScreenshot(tabId, options = {}) { return runAgentScreenshot(this, tabId, options); }
   agentConsole(tabId, options = {}) { return runAgentConsole(this, tabId, options); }
   agentNetwork(tabId, options = {}) { return runAgentNetwork(this, tabId, options); }
+  devtoolsSnapshot(tabId) { return runDevtoolsSnapshot(this, tabId); }
+  devtoolsClear(tabId, target) { return runDevtoolsClear(this, tabId, target); }
+  devtoolsEvaluate(tabId, expression) { return runDevtoolsEvaluate(this, tabId, expression); }
 
   async stop() {
     if (this.stopping) return;

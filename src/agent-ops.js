@@ -1,8 +1,9 @@
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { InputError } from './snapshot.js';
+import { inspectJsHandle, descriptorToSummary } from './devtools.js';
 
-const MAX_LOG_ENTRIES = 80;
+const MAX_LOG_ENTRIES = 200;
 
 function sanitizeLogUrl(raw) {
   try {
@@ -13,29 +14,79 @@ function sanitizeLogUrl(raw) {
   }
 }
 
-export function attachTabDiagnostics(tab) {
+export function attachTabDiagnostics(tab, onEvent = null) {
   tab.consoleLogs = [];
   tab.networkLogs = [];
+  tab.devtoolsSeq = tab.devtoolsSeq || 0;
   const requestStarts = new WeakMap();
   const pushBounded = (arr, item) => {
     arr.push(item);
     if (arr.length > MAX_LOG_ENTRIES) arr.splice(0, arr.length - MAX_LOG_ENTRIES);
   };
   tab.page.on('console', msg => {
-    const level = msg.type();
-    if (!['error', 'warning', 'log', 'info', 'assert'].includes(level)) return;
-    pushBounded(tab.consoleLogs, {
+    const rawLevel = msg.type();
+    const levelMap = {
+      error: 'error',
+      warning: 'warning',
+      log: 'log',
+      info: 'info',
+      debug: 'debug',
+      assert: 'assert',
+      dir: 'log',
+      table: 'log',
+      trace: 'log',
+      count: 'log',
+    };
+    const level = levelMap[rawLevel];
+    if (!level) return;
+    const rawText = String(msg.text() || '');
+    const text = rawText.replace(/\s+/g, ' ').trim().slice(0, 1500);
+    const loc = msg.location?.();
+    const location = loc?.url
+      ? { url: sanitizeLogUrl(loc.url), line: Number.isInteger(loc.lineNumber) ? loc.lineNumber + 1 : null }
+      : undefined;
+    const entry = {
+      id: ++tab.devtoolsSeq,
       time: new Date().toISOString(),
       level,
-      text: String(msg.text() || '').replace(/\s+/g, ' ').trim().slice(0, 500),
-    });
+      text,
+      ...(location ? { location } : {}),
+    };
+    pushBounded(tab.consoleLogs, entry);
+    onEvent?.('console', entry);
+
+    // Enrich logs that contain object/DOM/Error JSHandles so DevTools viewers
+    // can expand structured properties instead of reading flat preview strings.
+    const handles = typeof msg.args === 'function' ? msg.args() : [];
+    const likelyRich = /[{[\(<]|JSHandle@|Map\(|Set\(|Error\b|Array\(|Object\b/.test(rawText) || level === 'error';
+    if (handles.length > 0 && handles.length <= 8 && likelyRich) {
+      Promise.all(handles.map(handle => inspectJsHandle(handle, 400)))
+        .then(descriptors => {
+          const valid = descriptors.filter(Boolean);
+          if (!valid.length) return;
+          const hasRich = valid.some(d => ['object', 'array', 'map', 'set', 'error', 'element', 'function', 'date', 'regexp'].includes(d.t));
+          if (!hasRich) return;
+          entry.args = valid;
+          const summary = valid.map(descriptorToSummary).join(' ').replace(/\s+/g, ' ').trim().slice(0, 1500);
+          if (summary && rawText.includes('JSHandle@')) entry.text = summary;
+          onEvent?.('console-update', entry);
+        })
+        .catch(() => {});
+    }
   });
   tab.page.on('pageerror', error => {
-    pushBounded(tab.consoleLogs, {
+    const stack = typeof error?.stack === 'string'
+      ? error.stack.split('\n').slice(0, 8).join('\n').slice(0, 1200)
+      : undefined;
+    const entry = {
+      id: ++tab.devtoolsSeq,
       time: new Date().toISOString(),
       level: 'pageerror',
-      text: String(error?.message || error || 'Uncaught error').slice(0, 500),
-    });
+      text: String(error?.message || error || 'Uncaught error').slice(0, 1000),
+      ...(stack ? { stack } : {}),
+    };
+    pushBounded(tab.consoleLogs, entry);
+    onEvent?.('console', entry);
   });
   tab.page.on('request', req => {
     requestStarts.set(req, Date.now());
@@ -46,7 +97,14 @@ export function attachTabDiagnostics(tab) {
     if (!['fetch', 'xhr', 'document', 'script', 'stylesheet', 'other'].includes(type)) return;
     const started = requestStarts.get(req);
     const status = res.status();
-    pushBounded(tab.networkLogs, {
+    const headers = typeof res.headers === 'function' ? (res.headers() || {}) : {};
+    const contentType = typeof headers['content-type'] === 'string'
+      ? headers['content-type'].split(';')[0].trim().slice(0, 80)
+      : null;
+    const rawLen = Number(headers['content-length']);
+    const size = Number.isFinite(rawLen) && rawLen >= 0 ? rawLen : null;
+    const entry = {
+      id: ++tab.devtoolsSeq,
       time: new Date().toISOString(),
       method: req.method(),
       url: sanitizeLogUrl(req.url()),
@@ -54,12 +112,17 @@ export function attachTabDiagnostics(tab) {
       status,
       ok: status < 400,
       durationMs: started ? Date.now() - started : null,
+      contentType,
+      size,
       failure: null,
-    });
+    };
+    pushBounded(tab.networkLogs, entry);
+    onEvent?.('network', entry);
   });
   tab.page.on('requestfailed', req => {
     const started = requestStarts.get(req);
-    pushBounded(tab.networkLogs, {
+    const entry = {
+      id: ++tab.devtoolsSeq,
       time: new Date().toISOString(),
       method: req.method(),
       url: sanitizeLogUrl(req.url()),
@@ -67,8 +130,12 @@ export function attachTabDiagnostics(tab) {
       status: 0,
       ok: false,
       durationMs: started ? Date.now() - started : null,
+      contentType: null,
+      size: null,
       failure: req.failure()?.errorText || 'failed',
-    });
+    };
+    pushBounded(tab.networkLogs, entry);
+    onEvent?.('network', entry);
   });
 }
 
@@ -341,7 +408,9 @@ export async function runAgentConsole(browser, tabId, options = {}) {
   await browser.waitReady();
   const tab = browser.resolveTab(tabId, sessionId);
   const cap = Math.min(Math.max(Number(limit) || 50, 1), MAX_LOG_ENTRIES);
-  const entries = (tab.consoleLogs || []).slice(-cap);
+  const entries = (tab.consoleLogs || [])
+    .filter(item => item.level !== 'command' && item.level !== 'result')
+    .slice(-cap);
   if (clear && tab.consoleLogs) tab.consoleLogs.length = 0;
   return { ok: true, tabId: tab.id, shortId: tab.id.slice(0, 8), count: entries.length, entries };
 }

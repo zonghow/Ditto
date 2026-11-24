@@ -197,6 +197,16 @@ export function createApplication({ config, credentials, browser, sync, logger, 
     const result = await browser.getSelectionText(request.params.tabId);
     response.json({ ok: true, ...result });
   });
+  app.post('/api/tabs/:tabId/eval', requireDashboard, express.json({ limit: '64kb' }), async (request, response) => {
+    if (typeof browser.devtoolsEvaluate !== 'function') throw new InputError('当前模式不支持控制台求值。', 501);
+    const result = await browser.devtoolsEvaluate(request.params.tabId, request.body?.expression);
+    response.json(result);
+  });
+  app.post('/api/tabs/:tabId/devtools/clear', requireDashboard, express.json({ limit: '2kb' }), (request, response) => {
+    const target = ['console', 'network', 'all'].includes(request.body?.target) ? request.body.target : 'all';
+    browser.devtoolsClear?.(request.params.tabId, target);
+    response.json({ ok: true });
+  });
   app.post('/api/tabs/:tabId/upload', requireDashboard, express.json({ limit: '25mb' }), async (request, response) => {
     const name = typeof request.body?.name === 'string' && request.body.name.trim() ? path.basename(request.body.name.trim()).slice(0, 160) : 'upload.bin';
     const mimeType = typeof request.body?.mimeType === 'string' ? request.body.mimeType.slice(0, 120) : 'application/octet-stream';

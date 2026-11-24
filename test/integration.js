@@ -579,6 +579,22 @@ try {
     assert.equal(pwaRemoved.swStatus, 404);
     assert.equal(pwaRemoved.swCount, 0);
     checks.push('viewer does not expose PWA manifest, install action, or service worker');
+    // Built-in Console + JS REPL + Network DevTools panel check
+    await observer.locator('#devtools-toggle').click();
+    await observer.locator('#devtools-panel').waitFor({ state: 'visible' });
+    await observer.locator('#devtools-input').fill('({ answer: 21 + 21, nested: [1, 2] })');
+    await observer.locator('#devtools-input').press('Enter');
+    await observer.waitForFunction(() => [...document.querySelectorAll('#devtools-console-list .dt-level-result')]
+      .some(row => row.textContent.includes('answer: 42')));
+    await observer.locator('#devtools-console-list .dt-level-result details.dt-tree summary').last().click();
+    await observer.waitForFunction(() => [...document.querySelectorAll('#devtools-console-list .dt-tree-children')]
+      .some(el => el.textContent.includes('nested:')));
+    await observer.locator('#devtools-tab-network').click();
+    await observer.locator('#devtools-network-pane').waitFor({ state: 'visible' });
+    await observer.waitForFunction(() => document.querySelectorAll('#devtools-network-list .dt-net-row').length > 0);
+    await observer.locator('#devtools-close').click();
+    await observer.locator('#devtools-panel').waitFor({ state: 'hidden' });
+    checks.push('built-in viewer DevTools streams Console/Network logs and evaluates JS expressions with expandable object trees');
     assert.deepEqual(pageErrors, []);
     await observer.setViewportSize({ width: 390, height: 844 });
     const overflow = await observer.evaluate(() => ({

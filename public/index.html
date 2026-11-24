@@ -80,9 +80,13 @@
               </form>
               <div id="address-suggestions" class="address-suggestions" role="listbox" aria-label="历史记录匹配" hidden></div>
             </div>
+            <button id="devtools-toggle" class="icon-button devtools-toggle" type="button" title="打开控制台 (Alt+Shift+I)" aria-label="打开控制台" aria-pressed="false" aria-controls="devtools-panel">
+              <svg class="devtools-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M4.5 6.25 6.75 8 4.5 9.75"/><path d="M8.5 9.75h3"/></svg>
+            </button>
             <details class="browser-menu">
               <summary class="icon-button" aria-label="更多操作" title="更多操作">⋮</summary>
               <div class="browser-menu-panel">
+                <button id="menu-devtools" class="menu-item" type="button">打开控制台</button>
                 <button id="request-cookies" class="menu-item" type="button" disabled>从主力机重新同步 Cookie</button>
                 <button id="reopen-tab" class="menu-item" type="button" disabled>在新标签页重新打开</button>
                 <button id="copy-selection" class="menu-item" type="button" disabled>复制远端选中文本</button>
@@ -114,6 +118,63 @@
             </div>
             <span id="operation-status" role="status" aria-live="polite"></span>
           </div>
+          <section id="devtools-panel" class="devtools-panel" aria-label="浏览器控制台" hidden>
+            <div id="devtools-resizer" class="devtools-resizer" role="separator" aria-orientation="horizontal" aria-label="调整控制台高度"></div>
+            <div class="devtools-header">
+              <div class="devtools-tabs" role="tablist" aria-label="控制台面板">
+                <button id="devtools-tab-console" class="dt-tab active" type="button" role="tab" aria-selected="true">
+                  <span>Console</span>
+                  <span id="devtools-console-badge" class="dt-badge" hidden>0</span>
+                </button>
+                <button id="devtools-tab-network" class="dt-tab" type="button" role="tab" aria-selected="false">
+                  <span>Network</span>
+                  <span id="devtools-network-badge" class="dt-badge" hidden>0</span>
+                </button>
+              </div>
+              <div class="devtools-controls">
+                <div id="devtools-console-filters" class="dt-toolbar-group">
+                  <div id="devtools-level-filter" class="dt-filter-group" role="group" aria-label="日志级别">
+                    <button type="button" class="dt-filter-btn active" data-level="all" aria-pressed="true">全部</button>
+                    <button type="button" class="dt-filter-btn" data-level="error" aria-pressed="false">错误</button>
+                    <button type="button" class="dt-filter-btn" data-level="warning" aria-pressed="false">警告</button>
+                    <button type="button" class="dt-filter-btn" data-level="log" aria-pressed="false">日志</button>
+                  </div>
+                  <input id="devtools-console-search" class="dt-search" type="search" placeholder="过滤日志…" aria-label="过滤控制台日志">
+                </div>
+                <div id="devtools-network-filters" class="dt-toolbar-group" hidden>
+                  <label class="dt-check-pill"><input id="devtools-network-failed" type="checkbox"><span>仅失败</span></label>
+                  <select id="devtools-network-type" class="dt-select" aria-label="请求类型">
+                    <option value="all">全部类型</option>
+                    <option value="xhr">Fetch / XHR</option>
+                    <option value="document">文档</option>
+                    <option value="script">脚本 / 样式</option>
+                  </select>
+                  <input id="devtools-network-search" class="dt-search" type="search" placeholder="过滤 URL…" aria-label="过滤网络请求">
+                </div>
+                <button id="devtools-clear" class="button quiet dt-clear-btn" type="button" title="清空当前面板">清空</button>
+                <button id="devtools-close" class="icon-button dt-close-btn" type="button" title="关闭控制台" aria-label="关闭控制台">×</button>
+              </div>
+            </div>
+            <div id="devtools-console-pane" class="devtools-pane">
+              <div id="devtools-console-list" class="devtools-console-list" role="log" aria-live="polite"></div>
+              <div class="devtools-prompt">
+                <span class="dt-prompt-chevron" aria-hidden="true">›</span>
+                <textarea id="devtools-input" class="dt-input" rows="1" spellcheck="false" autocomplete="off" aria-label="执行 JavaScript" placeholder="输入 JavaScript 表达式，Enter 执行 / Shift+Enter 换行（支持 await）"></textarea>
+                <button id="devtools-run" class="button primary dt-run-btn" type="button">运行</button>
+              </div>
+            </div>
+            <div id="devtools-network-pane" class="devtools-pane" hidden>
+              <div class="dt-net-head">
+                <span class="dt-net-status">状态</span>
+                <span class="dt-net-method">方法</span>
+                <span class="dt-net-url">路径</span>
+                <span class="dt-net-type">类型</span>
+                <span class="dt-net-size">大小</span>
+                <span class="dt-net-dur">耗时</span>
+              </div>
+              <div id="devtools-network-list" class="devtools-network-list"></div>
+            </div>
+          </section>
         </div>
       </section>
     </section>

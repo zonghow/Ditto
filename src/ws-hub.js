@@ -293,6 +293,24 @@ export function createWsHub({
 
   const onTabCrashed = ({ tabId, url }) => log('browser', `tab crashed tab=${String(tabId || '').slice(0, 8)} url=${safeUrl(url)}`);
   const onVisit = ({ url, title } = {}) => { if (url) historyStore.record(url, title); };
+  const onDevtools = ({ tabId, kind, entry }) => {
+    if (!wss.clients.size || !tabId) return;
+    let serialized = null;
+    for (const ws of wss.clients) {
+      if (ws.readyState !== WebSocket.OPEN || ws.devtoolsTabId !== tabId) continue;
+      if (serialized === null) serialized = JSON.stringify({ type: 'devtools-event', tabId, kind, entry });
+      sendRaw(ws, serialized);
+    }
+  };
+  const onDevtoolsCleared = ({ tabId, target }) => {
+    if (!wss.clients.size || !tabId) return;
+    let serialized = null;
+    for (const ws of wss.clients) {
+      if (ws.readyState !== WebSocket.OPEN || ws.devtoolsTabId !== tabId) continue;
+      if (serialized === null) serialized = JSON.stringify({ type: 'devtools-cleared', tabId, target });
+      sendRaw(ws, serialized);
+    }
+  };
 
   cookieRequests.on('change', syncState);
   cookieRequests.on('change', state);
@@ -302,6 +320,8 @@ export function createWsHub({
   browser.on('screencast-frame', onScreencastFrame);
   browser.on('tab-crashed', onTabCrashed);
   browser.on('visit', onVisit);
+  browser.on('devtools', onDevtools);
+  browser.on('devtools-cleared', onDevtoolsCleared);
   sync.on('change', state);
 
   let observeOriginHandler = null;
@@ -326,6 +346,7 @@ export function createWsHub({
     ws.watchedTabId = null;
     ws.viewMode = 'browser';
     ws.screencastTabId = null;
+    ws.devtoolsTabId = null;
     ws.sentSnapshots = new Map();
     ws.rateWindow = Date.now();
     ws.rateCount = 0;
@@ -407,6 +428,19 @@ export function createWsHub({
             await browser.performScreencastInput?.(id, data);
             send(ws, { type: 'control-result', requestId: Number.isInteger(data.requestId) ? data.requestId : null, ok: true });
           } finally { ws.queuedControls--; }
+        } else if (data.type === 'devtools') {
+          if (data.enabled) {
+            if (typeof data.tabId !== 'string' || !data.tabId || data.tabId.length > 100) throw new InputError('缺少标签页 ID。');
+            ws.devtoolsTabId = data.tabId;
+            const snapshot = browser.devtoolsSnapshot?.(data.tabId) || { tabId: data.tabId, console: [], network: [] };
+            send(ws, { type: 'devtools-snapshot', ...snapshot });
+          } else {
+            ws.devtoolsTabId = null;
+          }
+        } else if (data.type === 'devtools-clear') {
+          if (typeof data.tabId !== 'string' || !data.tabId || data.tabId.length > 100) throw new InputError('缺少标签页 ID。');
+          const target = ['console', 'network', 'all'].includes(data.target) ? data.target : 'all';
+          browser.devtoolsClear?.(data.tabId, target);
         } else if (data.type === 'viewport') {
           if (ws.paused) return;
           const width = Math.round(Number(data.width));
@@ -479,6 +513,8 @@ export function createWsHub({
     browser.off('screencast-frame', onScreencastFrame);
     browser.off('tab-crashed', onTabCrashed);
     browser.off('visit', onVisit);
+    browser.off('devtools', onDevtools);
+    browser.off('devtools-cleared', onDevtoolsCleared);
     if (observeOriginHandler) browser.off('cookie-origin', observeOriginHandler);
     sync.off('change', state);
     if (syncChangedHandler) sync.off('change', syncChangedHandler);

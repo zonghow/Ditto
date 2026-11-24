@@ -7,6 +7,7 @@ import { createAddressBar } from './address-bar.js';
 import { ScreencastView } from './screencast-view.js';
 import { createTabStrip } from './tab-strip.js';
 import { createOverview } from './overview.js';
+import { createDevtoolsPanel } from './devtools-panel.js';
 
 const $ = selector => document.querySelector(selector);
 const binaryTextDecoder = new TextDecoder();
@@ -198,6 +199,37 @@ const overview = createOverview({
   selectTab: id => selectTab(id),
   setViewMode: mode => setViewMode(mode),
   browserAction: (action, opts) => browserAction(action, opts),
+});
+
+const devtoolsPanel = createDevtoolsPanel({
+  $,
+  element,
+  api,
+  copyText,
+  toast,
+  getSelectedTab: () => findTab(selected),
+  isBrowserReady: () => Boolean(state?.browser.ready && !state?.browser.importing),
+  onSubscribe: tabId => {
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify(tabId ? { type: 'devtools', enabled: true, tabId } : { type: 'devtools', enabled: false }));
+  },
+  onClear: (tabId, target) => {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'devtools-clear', tabId, target }));
+    } else {
+      api(`/api/tabs/${encodeURIComponent(tabId)}/devtools/clear`, {
+        method: 'POST',
+        body: JSON.stringify({ target }),
+      }).catch(() => {});
+    }
+  },
+  onLayoutChange: () => {
+    requestAnimationFrame(() => {
+      mainPlayer?.fit();
+      screencastView.fit();
+      sendViewport(false);
+    });
+  },
 });
 
 function updateDrawerIndicators() {
@@ -428,6 +460,7 @@ function selectTab(id, activate = true, { preserveAddressBar = false } = {}) {
   overview.setSelected(id);
   addressBar.update(!preserveAddressBar);
   syncScreencast();
+  devtoolsPanel.syncTab();
   if (!screencastTabId && (changed || !mainPlayer)) renderMain();
   updateReopenButton();
   updateControl();
@@ -904,7 +937,7 @@ function followAgentIfNeeded(next) {
   const busiestAgentTab = followCandidates.sort((a, b) => (b.agent?.updatedAt || 0) - (a.agent?.updatedAt || 0))[0] || null;
   const hasNewAgentActivity = Boolean(busiestAgentTab && (busiestAgentTab.agent?.updatedAt || 0) > lastFollowedActivityAt);
   const screencastInteracting = Boolean(screencastTabId && (screencastView.dragging || Date.now() - screencastView.lastInputAt < 1500));
-  const activelyEditing = controller.isEditing() || document.activeElement === $('#address-bar') || screencastInteracting;
+  const activelyEditing = controller.isEditing() || document.activeElement === $('#address-bar') || devtoolsPanel.isFocused() || screencastInteracting;
   const canAutoFollow = !activating && !creatingCount && !pendingControls.size && !optimisticClosedTabs.size && !optimisticNewTabs.size && !activelyEditing;
   if (hasNewAgentActivity && canAutoFollow) {
     lastFollowedActivityAt = busiestAgentTab.agent?.updatedAt || Date.now();
@@ -952,7 +985,7 @@ function updateState(next) {
   const busiestAgentTab = followCandidates.sort((a, b) => (b.agent?.updatedAt || 0) - (a.agent?.updatedAt || 0))[0] || null;
   const hasNewAgentActivity = Boolean(busiestAgentTab && (busiestAgentTab.agent?.updatedAt || 0) > lastFollowedActivityAt);
   const screencastInteracting = Boolean(screencastTabId && (screencastView.dragging || Date.now() - screencastView.lastInputAt < 1500));
-  const activelyEditing = controller.isEditing() || document.activeElement === $('#address-bar') || screencastInteracting;
+  const activelyEditing = controller.isEditing() || document.activeElement === $('#address-bar') || devtoolsPanel.isFocused() || screencastInteracting;
   const canAutoFollow = !activating && !creatingCount && !pendingControls.size && !optimisticClosedTabs.size && !optimisticNewTabs.size && !activelyEditing;
   const activeTabInfo = next.browser.activeTabId ? tabs.find(t => t.id === next.browser.activeTabId) : null;
   const allowActiveFollow = !pinnedSessionId || activeTabInfo?.agent?.sessionId === pinnedSessionId;
@@ -968,6 +1001,7 @@ function updateState(next) {
   else addressBar.update();
 
   syncScreencast();
+  devtoolsPanel.syncTab();
   tabStrip.setSelected(selected);
   overview.setSelected(selected);
   if (viewMode === 'overview') overview.updateLayout(true);
@@ -1036,6 +1070,7 @@ function connectLive() {
   socket.addEventListener('open', () => {
     connection(true);
     syncScreencast(true);
+    devtoolsPanel.syncTab(true);
     sendWatch();
     sendViewport(true);
     updateReopenButton();
@@ -1061,6 +1096,9 @@ function connectLive() {
         tabStrip.refreshFavicons(data.ids);
       }
       if (data.type === 'screencast-frame') screencastView.renderFrame(data);
+      if (data.type === 'devtools-snapshot') devtoolsPanel.handleSnapshot(data);
+      if (data.type === 'devtools-event') devtoolsPanel.handleEvent(data);
+      if (data.type === 'devtools-cleared') devtoolsPanel.handleCleared(data);
       if (data.type.startsWith('rrweb-')) updateRecording(data);
       if (data.type === 'control-result' || data.type === 'control-error') {
         pendingWheelControls.delete(data.requestId);
@@ -1101,6 +1139,7 @@ function showLogin() {
   clearTimeout(reconnect);
   socket?.close();
   syncScreencast();
+  devtoolsPanel.reset();
   setDrawerOpen(false);
   $('#login').hidden = false;
   $('#workspace').hidden = true;
@@ -1298,13 +1337,20 @@ document.addEventListener('keydown', event => {
     if (menu.open) { menu.open = false; return; }
     if (drawerOpen) { setDrawerOpen(false); return; }
     if (viewMode === 'overview') { setViewMode('browser'); return; }
-    if (authenticated && selected && document.activeElement !== $('#address-bar') && isTabLoading(selected)) {
+    if (authenticated && selected && document.activeElement !== $('#address-bar') && !devtoolsPanel.isFocused() && isTabLoading(selected)) {
       event.preventDefault();
       browserAction('stop');
     }
     return;
   }
-  if (!authenticated || controller.isEditing() || document.activeElement === $('#address-bar')) return;
+  if (!authenticated) return;
+  const devtoolsShortcut = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'i';
+  if (devtoolsShortcut && viewMode !== 'overview') {
+    event.preventDefault();
+    devtoolsPanel.toggle();
+    return;
+  }
+  if (controller.isEditing() || document.activeElement === $('#address-bar') || devtoolsPanel.isFocused()) return;
   const backShortcut = (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'ArrowLeft')
     || (event.metaKey && !event.ctrlKey && !event.altKey && event.key === '[');
   const forwardShortcut = (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'ArrowRight')

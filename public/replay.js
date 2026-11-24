@@ -133,6 +133,31 @@ video::-webkit-media-controls-overlay-enclosure,
 video::-webkit-media-controls-start-playback-button {
   display: none !important;
   opacity: 0 !important;
+}
+:where(canvas[data-ditto-canvas-inline="1"]) {
+  display: inline-block;
+}
+canvas[data-ditto-canvas] > img[data-ditto-canvas-img] {
+  display: block !important;
+  max-width: none !important;
+  max-height: none !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: inherit !important;
+  object-fit: fill !important;
+  pointer-events: none !important;
+  visibility: inherit !important;
+  opacity: 1 !important;
+}
+canvas[data-ditto-canvas="fill"] > img[data-ditto-canvas-img] {
+  width: 100% !important;
+  height: 100% !important;
+}
+canvas[data-ditto-canvas] > :not(img[data-ditto-canvas-img]) {
+  display: none !important;
 }`;
 
 function ensureReplayMediaStyles(doc) {
@@ -363,9 +388,37 @@ export class LiveReplay {
     }
     if (!canvas.width || !canvas.height) return;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(entry.img, 0, 0, canvas.width, canvas.height);
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(entry.img, 0, 0, canvas.width, canvas.height);
+    }
+    // In a script-disabled replay iframe (sandbox="allow-same-origin" without
+    // allow-scripts), HTML5 renders a <canvas>'s fallback child DOM instead of
+    // its 2D bitmap. Mirror the pre-decoded bitmap into a fallback <img> child
+    // so charts and canvas graphics composite visibly without relaxing sandbox.
+    const doc = canvas.ownerDocument;
+    if (!doc) return;
+    ensureReplayMediaStyles(doc);
+    let fallback = canvas.querySelector(':scope > img[data-ditto-canvas-img]');
+    if (!fallback) {
+      const cs = (() => { try { return doc.defaultView?.getComputedStyle(canvas) || null; } catch { return null; } })();
+      if (cs?.display === 'inline') canvas.setAttribute('data-ditto-canvas-inline', '1');
+      const rect = canvas.getBoundingClientRect();
+      const hasBox = cs?.display === 'none' || (rect.width >= 1 && rect.height >= 1);
+      canvas.setAttribute('data-ditto-canvas', hasBox ? 'fill' : 'intrinsic');
+      fallback = doc.createElement('img');
+      fallback.setAttribute('data-ditto-canvas-img', '1');
+      fallback.alt = '';
+      fallback.decoding = 'sync';
+      canvas.appendChild(fallback);
+    }
+    if (canvas.getAttribute('data-ditto-canvas') === 'intrinsic') {
+      const w = entry.width || canvas.width;
+      const h = entry.height || canvas.height;
+      if (w) fallback.style.width = `${w}px`;
+      if (h) fallback.style.height = `${h}px`;
+    }
+    if (fallback.src !== entry.dataUrl) fallback.src = entry.dataUrl;
   }
 
   paintCanvas(payload, { preserveSize = false } = {}) {

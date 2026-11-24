@@ -199,8 +199,11 @@ try {
     });
     await observer.waitForFunction(() => {
       const canvas = document.querySelector('#main-replay iframe')?.contentDocument?.querySelector('#chart');
+      const img = canvas?.querySelector(':scope > img[data-ditto-canvas-img]');
+      const r = img?.getBoundingClientRect();
       const px = canvas?.getContext('2d')?.getImageData(15, 15, 1, 1)?.data;
-      return Boolean(px && px[0] > 180 && px[1] < 80 && px[2] < 80 && px[3] > 200);
+      return Boolean(px && px[0] > 180 && px[1] < 80 && px[2] < 80 && px[3] > 200
+        && img?.complete && img.naturalWidth === 60 && r?.width >= 50 && r?.height >= 20);
     }, { timeout: 5000 });
     // Responsive canvas resize (width/height attribute mutation) + redraw must not wipe the replay canvas blank
     await freshPage.evaluate(() => {
@@ -213,9 +216,12 @@ try {
     });
     await observer.waitForFunction(() => {
       const canvas = document.querySelector('#main-replay iframe')?.contentDocument?.querySelector('#chart');
+      const img = canvas?.querySelector(':scope > img[data-ditto-canvas-img]');
+      const r = img?.getBoundingClientRect();
       if (!canvas || canvas.width !== 90) return false;
       const px = canvas.getContext('2d')?.getImageData(45, 15, 1, 1)?.data;
-      return Boolean(px && px[0] < 80 && px[1] > 140 && px[2] < 100 && px[3] > 200);
+      return Boolean(px && px[0] < 80 && px[1] > 140 && px[2] < 100 && px[3] > 200
+        && img?.complete && img.naturalWidth === 90 && r?.width >= 80 && r?.height >= 20);
     }, { timeout: 5000 });
     // Dynamically mounted canvas inside a new subtree (e.g. SPA chart tab switch) must also paint
     await freshPage.evaluate(() => {
@@ -232,8 +238,11 @@ try {
     });
     await observer.waitForFunction(() => {
       const canvas = document.querySelector('#main-replay iframe')?.contentDocument?.querySelector('#dynamic-chart');
+      const img = canvas?.querySelector(':scope > img[data-ditto-canvas-img]');
+      const r = img?.getBoundingClientRect();
       const px = canvas?.getContext('2d')?.getImageData(10, 10, 1, 1)?.data;
-      return Boolean(px && px[0] < 80 && px[1] < 120 && px[2] > 200 && px[3] > 200);
+      return Boolean(px && px[0] < 80 && px[1] < 120 && px[2] > 200 && px[3] > 200
+        && img?.complete && img.naturalWidth === 48 && r?.width >= 40 && r?.height >= 20);
     }, { timeout: 5000 });
     await observer.waitForFunction(() => {
       const video = document.querySelector('#main-replay iframe')?.contentDocument?.querySelector('#live-video');

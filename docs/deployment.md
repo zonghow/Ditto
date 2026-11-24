@@ -9,8 +9,8 @@ This guide covers all deployment topologies, environment variables, SSH-tunnel m
 Works on any Linux host with Docker (`docker compose` v2, legacy `docker-compose`, or Docker 18+):
 
 ```bash
-git clone https://github.com/zonghow/Ditto.git
-cd Ditto
+git clone https://github.com/zonghow/ditto.git
+cd ditto
 sh scripts/docker-up.sh
 ```
 

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zonghow/Ditto/actions/workflows/ci.yml"><img src="https://github.com/zonghow/Ditto/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/zonghow/ditto/actions/workflows/ci.yml"><img src="https://github.com/zonghow/ditto/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js >= 22" />
   <img src="https://img.shields.io/badge/Chrome-MV3%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white" alt="Chrome MV3 Extension" />
   <img src="https://img.shields.io/badge/Build-Zero%20Build%20Step-6b95ff?style=flat-square" alt="Zero Build Step" />
@@ -101,14 +101,14 @@ flowchart LR
 Send this prompt directly to your Coding Agent (**Claude Code**, **Codex**, or **OpenCode**) running on your remote Linux machine:
 
 ```text
-Clone https://github.com/zonghow/Ditto.git to ~/Ditto (if not already cloned), then follow ~/Ditto/INSTALL.md to start Ditto via Docker, install the ditto CLI and browser skill, verify /health, and reply with the reachable http://<host-ip>:3217 URL.
+Clone https://github.com/zonghow/ditto.git to ~/ditto (if not already cloned), then follow ~/ditto/INSTALL.md to start Ditto via Docker, install the ditto CLI and browser skill, verify /health, and reply with the reachable http://<host-ip>:3217 URL.
 ```
 
 #### Option B: Manual Docker Setup
 
 ```bash
-git clone https://github.com/zonghow/Ditto.git
-cd Ditto
+git clone https://github.com/zonghow/ditto.git
+cd ditto
 sh scripts/docker-up.sh        # Builds & starts ditto-browser on :3217
 sh scripts/install-skill.sh    # Installs ~/.local/bin/ditto & Agent Skill
 ditto status                   # Verify Chromium is ready

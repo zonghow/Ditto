@@ -3,13 +3,13 @@
   "version": "0.2.0",
   "private": true,
   "license": "MIT",
-  "homepage": "https://github.com/zonghow/Ditto#readme",
+  "homepage": "https://github.com/zonghow/ditto#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zonghow/Ditto.git"
+    "url": "https://github.com/zonghow/ditto.git"
   },
   "bugs": {
-    "url": "https://github.com/zonghow/Ditto/issues"
+    "url": "https://github.com/zonghow/ditto/issues"
   },
   "description": "Give remote Linux coding agents a real logged-in Chromium with offline-resilient Cookie/Storage sync, multi-agent tab isolation, and a live rrweb + CDP web console.",
   "keywords": [

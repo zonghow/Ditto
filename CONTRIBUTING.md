@@ -14,8 +14,8 @@ Thank you for your interest in contributing to Ditto!
 Requires **Node.js 22+**.
 
 ```bash
-git clone https://github.com/zonghow/Ditto.git
-cd Ditto
+git clone https://github.com/zonghow/ditto.git
+cd ditto
 npm ci --ignore-scripts
 npx playwright install chromium
 npm start

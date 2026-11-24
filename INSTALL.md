@@ -7,14 +7,14 @@
 
 ## 1. 获取项目代码
 
-如果当前不在 Ditto 仓库目录内，先将仓库克隆到 `~/Ditto`（已有目录则进入并更新）：
+如果当前不在 Ditto 仓库目录内，先将仓库克隆到 `~/ditto`（已有目录则进入并更新）：
 
 ```bash
 cd ~
-if [ ! -d "$HOME/Ditto/.git" ]; then
-  git clone https://github.com/zonghow/Ditto.git "$HOME/Ditto"
+if [ ! -d "$HOME/ditto/.git" ]; then
+  git clone https://github.com/zonghow/ditto.git "$HOME/ditto"
 fi
-cd "$HOME/Ditto"
+cd "$HOME/ditto"
 ```
 
 *(如果你已经在仓库根目录内，保持在当前仓库目录执行后续步骤即可。)*

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zonghow/Ditto/actions/workflows/ci.yml"><img src="https://github.com/zonghow/Ditto/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/zonghow/ditto/actions/workflows/ci.yml"><img src="https://github.com/zonghow/ditto/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js >= 22" />
   <img src="https://img.shields.io/badge/Chrome-MV3%20扩展-4285F4?style=flat-square&logo=googlechrome&logoColor=white" alt="Chrome MV3 Extension" />
   <img src="https://img.shields.io/badge/构建-零构建步骤-6b95ff?style=flat-square" alt="零构建步骤" />
@@ -101,14 +101,14 @@ flowchart LR
 把下面这句话直接发给运行在开发机上的 **Claude Code / Codex / OpenCode**：
 
 ```text
-请先将 https://github.com/zonghow/Ditto.git 克隆到 ~/Ditto（若已存在则直接进入），然后按照其中的 INSTALL.md 通过 Docker 部署 Ditto 服务、安装 ditto CLI 与浏览器 Skill，验证 /health 就绪后把连接地址发给我。
+请先将 https://github.com/zonghow/ditto.git 克隆到 ~/ditto（若已存在则直接进入），然后按照其中的 INSTALL.md 通过 Docker 部署 Ditto 服务、安装 ditto CLI 与浏览器 Skill，验证 /health 就绪后把连接地址发给我。
 ```
 
 #### 方式 B：手动 Docker 一键启动
 
 ```bash
-git clone https://github.com/zonghow/Ditto.git
-cd Ditto
+git clone https://github.com/zonghow/ditto.git
+cd ditto
 sh scripts/docker-up.sh        # 构建并后台启动 ditto-browser（监听 3217）
 sh scripts/install-skill.sh    # 安装 ~/.local/bin/ditto 与 Agent Skill
 ditto status                   # 验证 Chromium 就绪

@@ -39,15 +39,15 @@ test('concurrent agent sessions isolate tabs without --tab, wait through cookie 
       </script>`);
   });
 
+  t.after(async () => {
+    await app.close().catch(() => {});
+    await browser.stop().catch(() => {});
+    if (site.listening) await new Promise(resolve => site.close(resolve));
+    await rm(dataDir, { recursive: true, force: true });
+  });
   await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   await browser.start();
-  t.after(async () => {
-    await app.close();
-    await browser.stop();
-    await new Promise(resolve => site.close(resolve));
-    await rm(dataDir, { recursive: true, force: true });
-  });
 
   const base = `http://127.0.0.1:${app.server.address().port}`;
   const origin = `http://127.0.0.1:${site.address().port}`;

@@ -189,7 +189,7 @@ Requires **Node.js 22+**.
 npm ci --ignore-scripts
 npx playwright install chromium
 
-npm test                  # 99 unit tests (fast, no Chromium needed)
+npm test                  # 99 unit & CLI tests
 npm run test:integration  # End-to-end real Chromium + Web Console + rrweb + UI checks
 npm run test:attach       # Companion attach mode integration tests
 npm run test:extension    # Real Chrome MV3 side-load & auto-sync integration tests

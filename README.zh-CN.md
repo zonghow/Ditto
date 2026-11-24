@@ -189,7 +189,7 @@ Ditto/
 npm ci --ignore-scripts
 npx playwright install chromium
 
-npm test                  # 99 项单元测试（无需启动 Chromium）
+npm test                  # 99 项单元与 CLI 测试
 npm run test:integration  # 真实 Chromium + Web 控制台 + rrweb + UI 全链路集成测试
 npm run test:attach       # 附着伴随进程模式集成测试
 npm run test:extension    # Chrome MV3 扩展真实侧载与自动同步集成测试

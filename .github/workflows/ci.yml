@@ -10,6 +10,7 @@ jobs:
   test:
     name: Syntax & Unit Tests (Node 22)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -18,10 +19,13 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies (skip Chromium download)
+      - name: Install dependencies
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: npm ci --ignore-scripts
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps --no-shell chromium
 
       - name: Syntax check ESM sources
         run: |
@@ -29,5 +33,5 @@ jobs:
             node --check "$f"
           done
 
-      - name: Run unit tests
+      - name: Run test suite
         run: npm test

@@ -202,6 +202,39 @@ try {
       const px = canvas?.getContext('2d')?.getImageData(15, 15, 1, 1)?.data;
       return Boolean(px && px[0] > 180 && px[1] < 80 && px[2] < 80 && px[3] > 200);
     }, { timeout: 5000 });
+    // Responsive canvas resize (width/height attribute mutation) + redraw must not wipe the replay canvas blank
+    await freshPage.evaluate(() => {
+      const c = document.querySelector('#chart');
+      c.width = 90;
+      c.style.width = '90px';
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = 'rgb(22, 163, 74)';
+      ctx.fillRect(0, 0, 90, 30);
+    });
+    await observer.waitForFunction(() => {
+      const canvas = document.querySelector('#main-replay iframe')?.contentDocument?.querySelector('#chart');
+      if (!canvas || canvas.width !== 90) return false;
+      const px = canvas.getContext('2d')?.getImageData(45, 15, 1, 1)?.data;
+      return Boolean(px && px[0] < 80 && px[1] > 140 && px[2] < 100 && px[3] > 200);
+    }, { timeout: 5000 });
+    // Dynamically mounted canvas inside a new subtree (e.g. SPA chart tab switch) must also paint
+    await freshPage.evaluate(() => {
+      const wrap = document.createElement('div');
+      const dyn = document.createElement('canvas');
+      dyn.id = 'dynamic-chart';
+      dyn.width = 48;
+      dyn.height = 24;
+      const ctx = dyn.getContext('2d');
+      ctx.fillStyle = 'rgb(37, 99, 235)';
+      ctx.fillRect(0, 0, 48, 24);
+      wrap.append(dyn);
+      document.body.append(wrap);
+    });
+    await observer.waitForFunction(() => {
+      const canvas = document.querySelector('#main-replay iframe')?.contentDocument?.querySelector('#dynamic-chart');
+      const px = canvas?.getContext('2d')?.getImageData(10, 10, 1, 1)?.data;
+      return Boolean(px && px[0] < 80 && px[1] < 120 && px[2] > 200 && px[3] > 200);
+    }, { timeout: 5000 });
     await observer.waitForFunction(() => {
       const video = document.querySelector('#main-replay iframe')?.contentDocument?.querySelector('#live-video');
       return Boolean(video?.poster?.startsWith('data:image/'));

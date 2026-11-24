@@ -284,24 +284,47 @@ export class LiveReplay {
       }
       if (event.type === 3 && event.data?.source === 0) {
         if (Array.isArray(event.data.adds)) {
-          for (const add of event.data.adds) {
-            if (add?.node?.tagName?.toLowerCase() === 'link' && typeof add.node.attributes?.href === 'string' && add.node.attributes.href.startsWith('/api/assets/')) {
-              const link = this.node(add.node.id);
+          const visitAdded = node => {
+            if (!node || typeof node !== 'object') return;
+            const tag = node.tagName?.toLowerCase?.();
+            if (tag === 'link' && typeof node.attributes?.href === 'string' && node.attributes.href.startsWith('/api/assets/')) {
+              const link = this.node(node.id);
               if (link?.tagName === 'LINK') {
                 if (link.sheet) adaptStyleSheet(link.sheet);
                 else link.addEventListener('load', () => adaptDocumentHoverStyles(link.ownerDocument), { once: true });
               }
+            } else if (tag === 'canvas' && Number.isInteger(node.id)) {
+              const cachedCanvas = this.canvasFrames.get(node.id);
+              if (cachedCanvas) this.paintCanvas(cachedCanvas);
+            } else if (tag === 'video' && Number.isInteger(node.id)) {
+              const cachedVideo = this.videoFrames.get(node.id);
+              if (cachedVideo) this.paintVideo(cachedVideo);
             }
-          }
+            if (Array.isArray(node.childNodes)) {
+              for (const child of node.childNodes) visitAdded(child);
+            }
+          };
+          for (const add of event.data.adds) visitAdded(add?.node);
         }
         if (Array.isArray(event.data.attributes)) {
           for (const item of event.data.attributes) {
-            const cached = this.videoFrames.get(item.id);
-            if (cached) this.paintVideo(cached);
-            if (item.attributes && typeof item.attributes.href === 'string' && item.attributes.href.startsWith('/api/assets/')) {
-              const link = this.node(item.id);
-              if (link?.tagName === 'LINK') {
-                link.addEventListener('load', () => adaptDocumentHoverStyles(link.ownerDocument), { once: true });
+            const cachedVideo = this.videoFrames.get(item.id);
+            if (cachedVideo) this.paintVideo(cachedVideo);
+            if (item.attributes) {
+              const cachedCanvas = this.canvasFrames.get(item.id);
+              if (cachedCanvas && Object.keys(item.attributes).some(key => {
+                const lower = key.toLowerCase();
+                return lower === 'width' || lower === 'height';
+              })) {
+                // HTML5 clears a <canvas> backing store whenever width/height
+                // attributes mutate (even to the same value); restore immediately.
+                this.paintCanvas(cachedCanvas, { preserveSize: true });
+              }
+              if (typeof item.attributes.href === 'string' && item.attributes.href.startsWith('/api/assets/')) {
+                const link = this.node(item.id);
+                if (link?.tagName === 'LINK') {
+                  link.addEventListener('load', () => adaptDocumentHoverStyles(link.ownerDocument), { once: true });
+                }
               }
             }
             if (this.optimisticInputs.size) {
@@ -332,22 +355,38 @@ export class LiveReplay {
     this.fit();
   }
 
-  paintCanvas(payload) {
+  drawCanvasFrame(canvas, entry, preserveSize = false) {
+    if (!canvas || canvas.tagName !== 'CANVAS' || !entry?.img) return;
+    if (!preserveSize) {
+      if (entry.width && canvas.width !== entry.width) canvas.width = entry.width;
+      if (entry.height && canvas.height !== entry.height) canvas.height = entry.height;
+    }
+    if (!canvas.width || !canvas.height) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(entry.img, 0, 0, canvas.width, canvas.height);
+  }
+
+  paintCanvas(payload, { preserveSize = false } = {}) {
     const { id, width, height, dataUrl } = payload || {};
     if (!Number.isInteger(id) || typeof dataUrl !== 'string' || !/^data:image\/(?:webp|png|jpeg);base64,/.test(dataUrl)) return;
-    this.canvasFrames.set(id, { id, width, height, dataUrl });
-    const canvas = this.node(id);
-    if (!canvas || canvas.tagName !== 'CANVAS') return;
+    const existing = this.canvasFrames.get(id);
+    if (existing && existing.dataUrl === dataUrl && existing.width === width && existing.height === height) {
+      if (existing.img?.complete && existing.img.naturalWidth > 0) {
+        const canvas = this.node(id);
+        if (canvas && canvas.tagName === 'CANVAS') this.drawCanvasFrame(canvas, existing, preserveSize);
+      }
+      return;
+    }
+    const entry = { id, width, height, dataUrl, img: null };
+    this.canvasFrames.set(id, entry);
     const img = new Image();
     img.onload = () => {
+      if (this.canvasFrames.get(id) !== entry) return;
+      entry.img = img;
       const current = this.node(id);
-      if (!current || current.tagName !== 'CANVAS') return;
-      if (width && current.width !== width) current.width = width;
-      if (height && current.height !== height) current.height = height;
-      const ctx = current.getContext('2d');
-      if (!ctx) return;
-      ctx.clearRect(0, 0, current.width, current.height);
-      ctx.drawImage(img, 0, 0, current.width, current.height);
+      if (current && current.tagName === 'CANVAS') this.drawCanvasFrame(current, entry, false);
     };
     img.src = dataUrl;
   }

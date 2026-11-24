@@ -239,6 +239,14 @@ try {
     };
     await clickReplay('#text');
     await observer.locator('#remote-editor').waitFor({ state: 'visible' });
+    const editorStyle = await observer.evaluate(() => {
+      const el = document.querySelector('#remote-editor');
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, borderWidth: cs.borderTopWidth, ghost: el.dataset.ghost };
+    });
+    assert.equal(editorStyle.bg, 'rgba(0, 0, 0, 0)');
+    assert.equal(editorStyle.borderWidth, '0px');
+    assert.equal(editorStyle.ghost, 'false');
     await observer.locator('#remote-editor').fill('中文 through viewer');
     await freshPage.locator('#typed').filter({ hasText: '中文 through viewer' }).waitFor();
     await replay().locator('#typed').filter({ hasText: '中文 through viewer' }).waitFor();

@@ -1176,9 +1176,31 @@ pre { white-space: pre-wrap; margin: 8px 0 0; padding: 10px; background: var(--c
 #control-surface { position: absolute; inset: 0; z-index: 3; cursor: default; outline: none; touch-action: none; }
 #control-surface[data-mode=readonly] { cursor: default; }
 #control-surface:focus-visible { box-shadow: inset 0 0 0 2px var(--blue); }
-#remote-editor, #remote-select {
-  position: absolute; z-index: 4; max-width: 100%; margin: 0; padding: 3px 5px; resize: none;
-  border: 1px solid var(--blue); border-radius: 3px; background: #ffffff; color: #141418;
+#remote-editor {
+  position: absolute; z-index: 4; max-width: 100%; margin: 0; padding: 0; resize: none;
+  border: 0; outline: 0; background: transparent; color: transparent;
+  overflow: hidden; box-sizing: border-box;
+}
+#remote-editor::selection {
+  background: rgba(107, 149, 255, .28);
+}
+#remote-editor[data-ghost="true"] {
+  pointer-events: none;
+}
+#remote-editor.is-composing {
+  background: var(--editor-bg, #ffffff);
+  color: var(--editor-fg, #141418);
+  caret-color: var(--editor-fg, #141418);
+}
+#remote-editor[data-ghost="true"].is-composing {
+  min-width: 96px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
+}
+#remote-select {
+  position: absolute; z-index: 4; max-width: 100%; margin: 0; padding: 3px 5px;
+  border: 1px solid var(--blue); border-radius: 4px; background: var(--panel); color: var(--text);
   font: 14px sans-serif; outline: 2px solid color-mix(in srgb, var(--blue) 28%, transparent); box-sizing: border-box;
 }
 #empty-frame { flex: 1; align-self: stretch; min-height: 0; padding: 28px; text-align: center; display: grid; align-content: center; justify-items: center; }

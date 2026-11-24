@@ -105,8 +105,15 @@ export class RemoteControl {
       if (!this.enabled || !this.target || this.composing) return;
       this.sendEditor();
     });
-    editor.addEventListener('compositionstart', () => { this.composing = true; });
-    editor.addEventListener('compositionend', () => { this.composing = false; this.sendEditor(); });
+    editor.addEventListener('compositionstart', () => {
+      this.composing = true;
+      editor.classList.add('is-composing');
+    });
+    editor.addEventListener('compositionend', () => {
+      this.composing = false;
+      editor.classList.remove('is-composing');
+      this.sendEditor();
+    });
     editor.addEventListener('keydown', event => this.key(event, true));
     select.addEventListener('change', () => {
       if (this.enabled && this.target) {
@@ -225,6 +232,20 @@ export class RemoteControl {
     let left = rect.left;
     let top = rect.top;
     let win = node.ownerDocument.defaultView;
+    const nodeStyle = (() => { try { return win?.getComputedStyle(node) || null; } catch { return null; } })();
+    const isTransparentColor = value => !value || value === 'transparent'
+      || /^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0(?:\.0+)?\s*\)$/i.test(value);
+    const resolveBg = el => {
+      let cur = el;
+      for (let d = 0; cur && d < 12; d++) {
+        try {
+          const bg = cur.ownerDocument?.defaultView?.getComputedStyle(cur)?.backgroundColor;
+          if (bg && !isTransparentColor(bg)) return bg;
+        } catch { break; }
+        cur = cur.parentElement;
+      }
+      return '#ffffff';
+    };
     try {
       while (win !== this.replay.player.iframe.contentWindow) {
         const frame = win.frameElement;
@@ -234,10 +255,48 @@ export class RemoteControl {
         win = frame.ownerDocument.defaultView;
       }
     } catch { this.hideEditor(); return; }
+    const scaledWidth = rect.width * scale;
+    const scaledHeight = rect.height * scale;
+    const isProxyInput = control === this.editor && (
+      scaledWidth < 24 || scaledHeight < 14
+      || parseFloat(nodeStyle?.opacity ?? '1') <= 0.05
+      || nodeStyle?.visibility === 'hidden'
+      || nodeStyle?.pointerEvents === 'none'
+      || (node.tagName === 'INPUT' && isTransparentColor(nodeStyle?.backgroundColor)
+        && parseFloat(nodeStyle?.borderTopWidth || '0') === 0
+        && parseFloat(nodeStyle?.borderBottomWidth || '0') === 0
+        && Boolean(node.closest?.('[role="combobox"], .arco-select, .ant-select, .semi-select, .el-select')))
+    );
     control.style.left = `${Math.max(0, frameRect.left - surfaceRect.left + left * scale)}px`;
     control.style.top = `${Math.max(0, frameRect.top - surfaceRect.top + top * scale)}px`;
-    control.style.width = `${Math.min(surfaceRect.width, Math.max(45, rect.width * scale))}px`;
-    control.style.height = `${Math.max(25, rect.height * scale)}px`;
+    if (control === this.select) {
+      control.style.width = `${Math.min(surfaceRect.width, Math.max(45, scaledWidth))}px`;
+      control.style.height = `${Math.max(25, scaledHeight)}px`;
+    } else {
+      control.dataset.ghost = String(isProxyInput);
+      control.classList.remove('is-composing');
+      const w = isProxyInput ? Math.max(2, Math.min(surfaceRect.width, scaledWidth)) : Math.min(surfaceRect.width, Math.max(12, scaledWidth));
+      const h = Math.max(16, scaledHeight);
+      control.style.width = `${w}px`;
+      control.style.height = `${h}px`;
+      const rawFontSize = parseFloat(nodeStyle?.fontSize || '14');
+      const fontSize = Number.isFinite(rawFontSize) ? Math.max(10, rawFontSize * scale) : 14;
+      const rawLineHeight = parseFloat(nodeStyle?.lineHeight || '');
+      control.style.fontFamily = nodeStyle?.fontFamily || 'sans-serif';
+      control.style.fontSize = `${fontSize}px`;
+      control.style.fontWeight = nodeStyle?.fontWeight || '400';
+      control.style.lineHeight = Number.isFinite(rawLineHeight) ? `${Math.max(12, rawLineHeight * scale)}px` : '1.35';
+      control.style.textAlign = nodeStyle?.textAlign || 'left';
+      control.style.whiteSpace = node.tagName === 'INPUT' ? 'nowrap' : 'pre-wrap';
+      const pad = prop => `${Math.max(0, (parseFloat(nodeStyle?.[prop] || '0') || 0) * scale)}px`;
+      control.style.padding = isProxyInput ? '0' : `${pad('paddingTop')} ${pad('paddingRight')} ${pad('paddingBottom')} ${pad('paddingLeft')}`;
+      control.style.borderRadius = nodeStyle?.borderRadius || '0px';
+      const fg = nodeStyle?.color && !isTransparentColor(nodeStyle.color) ? nodeStyle.color : '#141418';
+      const bg = resolveBg(node);
+      control.style.setProperty('--editor-fg', fg);
+      control.style.setProperty('--editor-bg', bg);
+      control.style.caretColor = (isProxyInput || this.password) ? 'transparent' : fg;
+    }
     control.hidden = false;
     control.focus({ preventScroll: true });
     if (control === this.editor) this.editor.setSelectionRange(this.editor.value.length, this.editor.value.length);
@@ -289,6 +348,8 @@ export class RemoteControl {
 
   hideEditor() {
     this.editor.hidden = true;
+    this.editor.classList.remove('is-composing');
+    this.editor.dataset.ghost = 'false';
     this.select.hidden = true;
     this.select.replaceChildren();
     this.editor.value = '';

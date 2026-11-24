@@ -2,7 +2,7 @@ import { Replayer } from '/vendor/rrweb/replay.js';
 import { replayBaseline } from './replay-clock.js';
 
 const MAX_EVENTS = 2000;
-const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_BYTES = 12 * 1024 * 1024;
 const INTERACTIVE_PSEUDO_RE = /(?<!\\):(hover|active)(?![a-zA-Z0-9_-])/g;
 const SAFE_CURSORS = new Set([
   'auto', 'default', 'pointer', 'text', 'move', 'grab', 'grabbing', 'not-allowed',
@@ -56,7 +56,18 @@ function adaptInteractivePseudoRules(rules) {
       }
     }
     if (rule.cssRules?.length) adaptInteractivePseudoRules(rule.cssRules);
+    if (rule.styleSheet) adaptStyleSheet(rule.styleSheet);
   }
+}
+
+function adaptStyleSheet(sheet) {
+  if (!sheet || adaptedSheets.has(sheet)) return;
+  try {
+    if (sheet.cssRules?.length) {
+      adaptInteractivePseudoRules(sheet.cssRules);
+      adaptedSheets.add(sheet);
+    }
+  } catch { /* cross-origin or pending sheet */ }
 }
 
 function scrollKey(node) {
@@ -147,15 +158,7 @@ function ensureReplayMediaStyles(doc) {
 function adaptDocumentHoverStyles(doc) {
   if (!doc) return;
   ensureReplayMediaStyles(doc);
-  for (const sheet of doc.styleSheets || []) {
-    if (adaptedSheets.has(sheet)) continue;
-    try {
-      if (sheet.cssRules?.length) {
-        adaptInteractivePseudoRules(sheet.cssRules);
-        adaptedSheets.add(sheet);
-      }
-    } catch { /* cross-origin or pending sheet */ }
-  }
+  for (const sheet of doc.styleSheets || []) adaptStyleSheet(sheet);
   for (const frame of doc.querySelectorAll?.('iframe') || []) {
     try { adaptDocumentHoverStyles(frame.contentDocument); } catch { /* ignore */ }
   }
@@ -280,10 +283,27 @@ export class LiveReplay {
         this.reportCrossOrigin(event.data.payload);
       }
       if (event.type === 3 && event.data?.source === 0) {
+        if (Array.isArray(event.data.adds)) {
+          for (const add of event.data.adds) {
+            if (add?.node?.tagName?.toLowerCase() === 'link' && typeof add.node.attributes?.href === 'string' && add.node.attributes.href.startsWith('/api/assets/')) {
+              const link = this.node(add.node.id);
+              if (link?.tagName === 'LINK') {
+                if (link.sheet) adaptStyleSheet(link.sheet);
+                else link.addEventListener('load', () => adaptDocumentHoverStyles(link.ownerDocument), { once: true });
+              }
+            }
+          }
+        }
         if (Array.isArray(event.data.attributes)) {
           for (const item of event.data.attributes) {
             const cached = this.videoFrames.get(item.id);
             if (cached) this.paintVideo(cached);
+            if (item.attributes && typeof item.attributes.href === 'string' && item.attributes.href.startsWith('/api/assets/')) {
+              const link = this.node(item.id);
+              if (link?.tagName === 'LINK') {
+                link.addEventListener('load', () => adaptDocumentHoverStyles(link.ownerDocument), { once: true });
+              }
+            }
             if (this.optimisticInputs.size) {
               const target = this.node(item.id);
               const opt = target ? this.optimisticInputs.get(target) : null;

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 export const MAX_ASSET_BYTES = 2 * 1024 * 1024;
 const MAX_CACHE_BYTES = 64 * 1024 * 1024;
@@ -251,6 +251,55 @@ export class AssetCache {
     return true;
   }
 
+  // Externalizes large inline <style> payloads into the scoped asset cache so
+  // dev-server style-loader pages (hundreds of <style> tags) stay compact in
+  // rrweb snapshots while deduplicating identical stylesheets across checkouts.
+  putInlineCss(scope, rawCss, base, documentUrls = null) {
+    if (typeof rawCss !== 'string' || !rawCss) return '';
+    const sanitized = this.css(scope, rawCss, base, documentUrls);
+    const data = Buffer.from(sanitized, 'utf8');
+    if (!data.length || data.length > MAX_ASSET_BYTES) return '';
+    const hash = createHash('sha256').update(data).digest('hex');
+    const key = `${scope}\ninline-css:${hash}`;
+    const generation = this.currentGeneration(scope);
+    let id = this.references.get(key);
+    if (!id) {
+      if (this.references.size >= MAX_REFERENCES) {
+        const oldest = this.entries.values().next().value;
+        if (oldest) {
+          this.bytes -= oldest.bytes;
+          this.entries.delete(oldest.id);
+          this.references.delete(oldest.key);
+          this.requestedMissing.delete(oldest.id);
+        } else {
+          return '';
+        }
+      }
+      id = randomBytes(18).toString('hex');
+      this.references.set(key, id);
+      this.entries.set(id, { id, key, scope, generation, bytes: 0, body: null, contentType: 'text/css', referenced: true });
+    }
+    const entry = this.entries.get(id);
+    if (!entry) return '';
+    entry.referenced = true;
+    entry.generation = generation;
+    if (!entry.body) {
+      entry.body = data;
+      entry.contentType = 'text/css';
+      entry.bytes = data.length;
+      this.bytes += data.length;
+    }
+    this.touch(id, entry);
+    for (const older of this.entries.values()) {
+      if (this.bytes <= MAX_CACHE_BYTES) break;
+      if (!older.body || older === entry) continue;
+      this.bytes -= older.bytes;
+      older.body = null;
+      older.bytes = 0;
+    }
+    return `/api/assets/${id}`;
+  }
+
   get(id) {
     const entry = this.entries.get(id);
     if (entry && entry.body) this.touch(id, entry);
@@ -264,7 +313,9 @@ export class AssetCache {
     if (!entry) return null;
     const split = entry.key.indexOf('\n');
     if (split < 0) return null;
-    return { scope: entry.key.slice(0, split), url: entry.key.slice(split + 1) };
+    const url = entry.key.slice(split + 1);
+    if (!/^https?:\/\//i.test(url)) return null;
+    return { scope: entry.key.slice(0, split), url };
   }
 
   removeScope(scope) {

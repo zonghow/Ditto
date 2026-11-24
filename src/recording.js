@@ -1,7 +1,10 @@
 import { normalizeDocumentUrl, rrwebFragmentBaseUrl } from './assets.js';
 
-export const MAX_RECORDING_BYTES = 8 * 1024 * 1024;
+export const MAX_RECORDING_BYTES = 12 * 1024 * 1024;
 export const MAX_RECORDING_EVENTS = 2000;
+export const EXTERNAL_STYLE_THRESHOLD = 32 * 1024;
+export const EXTERNAL_STYLE_OVERFLOW_BUDGET = 256 * 1024;
+export const EXTERNAL_STYLE_OVERFLOW_THRESHOLD = 4 * 1024;
 export const REPLAY_CSP = "default-src 'none'; script-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; frame-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
 const INERT_TAGS = new Set(['script', 'noscript', 'object', 'embed', 'base', 'audio', 'source', 'track', 'foreignobject', 'animate', 'animatetransform', 'animatemotion', 'set']);
@@ -32,6 +35,10 @@ function isCrossOriginHttpUrl(value, base) {
 export class RecordingSanitizer {
   nodes = new Map();
   styles = new Set();
+  externalizedStyles = new Set();
+  externalizedStyleChildren = new Map();
+  inlineStyleTextChildren = new Map();
+  inlineStyleBytes = 0;
   documentUrls = new Set();
   securityId = 1_000_000_000;
 
@@ -98,6 +105,51 @@ export class RecordingSanitizer {
     return clean;
   }
 
+  styleExternalizeThreshold() {
+    return this.inlineStyleBytes >= EXTERNAL_STYLE_OVERFLOW_BUDGET
+      ? EXTERNAL_STYLE_OVERFLOW_THRESHOLD
+      : EXTERNAL_STYLE_THRESHOLD;
+  }
+
+  externalizeStyleNode(node, countInline = true) {
+    if (typeof this.assets?.putInlineCss !== 'function') return null;
+    const rawType = node.attributes?.type ?? node.attributes?.TYPE;
+    if (typeof rawType === 'string' && rawType.trim() && !/^text\/css\b/i.test(rawType.trim())) return null;
+    const hasCssText = typeof node.attributes?._cssText === 'string' && node.attributes._cssText.length > 0;
+    const children = Array.isArray(node.childNodes) ? node.childNodes : [];
+    const textChildrenOnly = children.length > 0 && children.every(c => c && c.type === 3 && typeof c.textContent === 'string');
+    if (!hasCssText && !textChildrenOnly) return null;
+    const rawCss = hasCssText ? node.attributes._cssText : children.map(c => c.textContent).join('');
+    const cssBytes = Buffer.byteLength(rawCss, 'utf8');
+    if (cssBytes < this.styleExternalizeThreshold()) {
+      if (countInline) this.inlineStyleBytes += cssBytes;
+      return null;
+    }
+    const href = this.assets.putInlineCss(this.scope, rawCss, this.base, this.documentUrls);
+    if (!href) {
+      if (countInline) this.inlineStyleBytes += cssBytes;
+      return null;
+    }
+    this.externalizedStyles.add(node.id);
+    for (const child of children) {
+      if (Number.isInteger(child.id)) {
+        this.nodes.set(child.id, '');
+        this.styles.add(child.id);
+        this.externalizedStyleChildren.set(child.id, node.id);
+      }
+    }
+    const attrs = { ...(node.attributes || {}) };
+    delete attrs._cssText;
+    delete attrs._CSSTEXT;
+    const clean = this.attributes(attrs, 'style');
+    clean.rel = 'stylesheet';
+    clean.href = href;
+    node.tagName = 'link';
+    node.attributes = clean;
+    node.childNodes = [];
+    return node;
+  }
+
   node(input, budget, depth = 0) {
     if (!input || typeof input !== 'object' || !Number.isInteger(input.id) || depth > 200 || ++budget.count > 100000) throw new Error('Recording document exceeds the safe replay budget.');
     const node = { ...input };
@@ -109,6 +161,15 @@ export class RecordingSanitizer {
       node.attributes = {};
       node.childNodes = [];
       return node;
+    }
+    if (node.type === 2 && tag === 'style') {
+      const externalized = this.externalizeStyleNode(node);
+      if (externalized) return externalized;
+      const textKids = new Set();
+      for (const child of node.childNodes || []) {
+        if (child?.type === 3 && Number.isInteger(child.id)) textKids.add(child.id);
+      }
+      this.inlineStyleTextChildren.set(node.id, textKids);
     }
     if (node.type === 2) node.attributes = this.attributes(node.attributes, tag);
     if (node.type === 3 && node.isStyle) node.textContent = this.assets.css(this.scope, node.textContent, this.base, this.documentUrls);
@@ -136,6 +197,10 @@ export class RecordingSanitizer {
     if (event.type === 2) {
       this.nodes.clear();
       this.styles.clear();
+      this.externalizedStyles.clear();
+      this.externalizedStyleChildren.clear();
+      this.inlineStyleTextChildren.clear();
+      this.inlineStyleBytes = 0;
       return { ...event, data: { node: this.node(data.node, { count: 0 }), initialOffset: data.initialOffset } };
     }
     if (event.type === 5) {
@@ -161,11 +226,146 @@ export class RecordingSanitizer {
     if (![0, 1, 2, 3, 4, 5, 6, 8, 12, 13, 14, 15, 16].includes(data.source)) return null;
     event.data = { ...data };
     if (data.source === 0) {
-      event.data.adds = (data.adds || []).map(add => ({ ...add, node: this.node(add.node, { count: 0 }) }));
-      event.data.attributes = (data.attributes || []).map(item => ({ ...item,
-        attributes: this.attributes(item.attributes, this.nodes.get(item.id), true) }));
-      event.data.texts = (data.texts || []).map(item => ({ ...item,
-        value: this.styles.has(item.id) ? this.assets.css(this.scope, item.value, this.base, this.documentUrls) : item.value }));
+      const rawAdds = data.adds || [];
+      // rrweb MutationBuffer flattens newly inserted <style> elements and their
+      // text child nodes into separate entries in the same adds array. Group
+      // those paired text children back onto the <style> before sanitization so
+      // large dynamic style-loader sheets are externalized to <link> immediately.
+      const pendingEmptyStyles = new Map();
+      for (const add of rawAdds) {
+        const n = add?.node;
+        if (n?.type === 2 && String(n.tagName || '').toLowerCase() === 'style' && Number.isInteger(n.id) && !(n.childNodes?.length)) {
+          pendingEmptyStyles.set(n.id, []);
+        }
+      }
+      const pairedChildAdds = new Set();
+      if (pendingEmptyStyles.size) {
+        for (const add of rawAdds) {
+          const list = pendingEmptyStyles.get(add?.parentId);
+          if (list && add.node?.type === 3 && typeof add.node.textContent === 'string') {
+            list.push(add);
+          } else if (list) {
+            pendingEmptyStyles.delete(add.parentId);
+          }
+        }
+      }
+      const extraAttributes = [];
+      const addedStyleParents = new Set();
+      const adds = [];
+      for (const add of rawAdds) {
+        if (pairedChildAdds.has(add)) continue;
+        if (this.externalizedStyles.has(add.parentId) && add.node?.type === 3 && typeof add.node.textContent === 'string') {
+          if (Number.isInteger(add.node.id)) {
+            this.nodes.set(add.node.id, '');
+            this.styles.add(add.node.id);
+            this.externalizedStyleChildren.set(add.node.id, add.parentId);
+          }
+          addedStyleParents.add(add.parentId);
+          const href = this.assets?.putInlineCss?.(this.scope, add.node.textContent, this.base, this.documentUrls) || '';
+          extraAttributes.push({ id: add.parentId, attributes: { href } });
+          continue;
+        }
+        const paired = Number.isInteger(add?.node?.id) ? pendingEmptyStyles.get(add.node.id) : null;
+        if (paired?.length) {
+          const combined = { ...add.node, childNodes: paired.map(entry => entry.node) };
+          const externalized = this.externalizeStyleNode(combined, false);
+          if (externalized) {
+            this.nodes.set(externalized.id, 'style');
+            this.styles.add(externalized.id);
+            for (const entry of paired) pairedChildAdds.add(entry);
+            adds.push({ ...add, node: externalized });
+            continue;
+          }
+        }
+        if (this.nodes.get(add.parentId) === 'style' && !this.externalizedStyles.has(add.parentId)
+          && add.node?.type === 3 && typeof add.node.textContent === 'string') {
+          const textKids = this.inlineStyleTextChildren.get(add.parentId) || new Set();
+          const cssBytes = Buffer.byteLength(add.node.textContent, 'utf8');
+          if (textKids.size === 0 && cssBytes >= this.styleExternalizeThreshold() && typeof this.assets?.putInlineCss === 'function') {
+            const href = this.assets.putInlineCss(this.scope, add.node.textContent, this.base, this.documentUrls);
+            if (href) {
+              const stub = { ...add.node, isStyle: true, textContent: `@import url("${href}");` };
+              this.nodes.set(stub.id, '');
+              this.styles.add(stub.id);
+              textKids.add(stub.id);
+              this.inlineStyleTextChildren.set(add.parentId, textKids);
+              adds.push({ ...add, node: stub });
+              continue;
+            }
+          }
+          this.inlineStyleBytes += cssBytes;
+          if (Number.isInteger(add.node.id)) {
+            textKids.add(add.node.id);
+            this.inlineStyleTextChildren.set(add.parentId, textKids);
+          }
+        }
+        adds.push({ ...add, node: this.node(add.node, { count: 0 }) });
+      }
+      const removes = [];
+      for (const rem of data.removes || []) {
+        if (this.externalizedStyles.has(rem.parentId)) {
+          this.externalizedStyleChildren.delete(rem.id);
+          if (!addedStyleParents.has(rem.parentId)) {
+            extraAttributes.push({ id: rem.parentId, attributes: { href: '' } });
+          }
+          continue;
+        }
+        if (this.externalizedStyles.has(rem.id)) {
+          this.externalizedStyles.delete(rem.id);
+          for (const [childId, parentId] of this.externalizedStyleChildren) {
+            if (parentId === rem.id) this.externalizedStyleChildren.delete(childId);
+          }
+        }
+        this.inlineStyleTextChildren.get(rem.parentId)?.delete(rem.id);
+        this.inlineStyleTextChildren.delete(rem.id);
+        removes.push(rem);
+      }
+      const attributes = [];
+      for (const item of data.attributes || []) {
+        if (this.externalizedStyles.has(item.id) && item.attributes && ('_cssText' in item.attributes || '_csstext' in item.attributes)) {
+          const copy = { ...item.attributes };
+          const rawCss = copy._cssText ?? copy._csstext;
+          delete copy._cssText;
+          delete copy._csstext;
+          const clean = this.attributes(copy, 'style', true);
+          clean.href = typeof rawCss === 'string' && rawCss
+            ? (this.assets?.putInlineCss?.(this.scope, rawCss, this.base, this.documentUrls) || '')
+            : '';
+          attributes.push({ ...item, attributes: clean });
+          continue;
+        }
+        attributes.push({ ...item, attributes: this.attributes(item.attributes, this.nodes.get(item.id), true) });
+      }
+      const texts = [];
+      for (const item of data.texts || []) {
+        const parentStyleId = this.externalizedStyleChildren.get(item.id);
+        if (parentStyleId !== undefined) {
+          const href = typeof item.value === 'string' && item.value
+            ? (this.assets?.putInlineCss?.(this.scope, item.value, this.base, this.documentUrls) || '')
+            : '';
+          extraAttributes.push({ id: parentStyleId, attributes: { href } });
+          continue;
+        }
+        let value = item.value;
+        if (this.styles.has(item.id) && typeof value === 'string') {
+          const cssBytes = Buffer.byteLength(value, 'utf8');
+          let soleTextChild = false;
+          for (const kids of this.inlineStyleTextChildren.values()) {
+            if (kids.has(item.id)) { soleTextChild = kids.size === 1; break; }
+          }
+          if (soleTextChild && cssBytes >= this.styleExternalizeThreshold() && typeof this.assets?.putInlineCss === 'function') {
+            const href = this.assets.putInlineCss(this.scope, value, this.base, this.documentUrls);
+            value = href ? `@import url("${href}");` : this.assets.css(this.scope, value, this.base, this.documentUrls);
+          } else {
+            value = this.assets.css(this.scope, value, this.base, this.documentUrls);
+          }
+        }
+        texts.push({ ...item, value });
+      }
+      event.data.adds = adds;
+      if (data.removes) event.data.removes = removes;
+      event.data.attributes = [...attributes, ...extraAttributes];
+      event.data.texts = texts;
     } else if (data.source === 8) {
       event.data.adds = (data.adds || []).map(add => ({ ...add, rule: this.assets.css(this.scope, add.rule, this.base, this.documentUrls) }));
       if (data.replace) event.data.replace = this.assets.css(this.scope, data.replace, this.base, this.documentUrls);

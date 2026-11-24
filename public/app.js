@@ -41,6 +41,8 @@ const pendingControlTargets = new Map();
 const recordings = new RecordingStore();
 const autoScreencastHandledDocs = new Set();
 const dismissedXOriginDocs = new Set();
+const dismissedLimitedDocs = new Set();
+let bannerReason = null;
 let mainPlayer = null;
 let viewerId = null;
 let controlRequestId = 0;
@@ -154,6 +156,7 @@ const controller = new RemoteControl({
   blocked: () => {
     const tab = findTab(selected);
     if (state?.browser.importing) toast('正在同步登录态，请稍候。');
+    else if (tab?.recordingStatus === 'limited') toast('当前页面 DOM 体积超过回放上限，请切换画面直连模式。');
     else if (!mainPlayer?.isReady || tab?.recordingStatus !== 'live') toast('正在准备最新回放，请稍候。');
   },
   send: data => {
@@ -275,14 +278,35 @@ function sendWatch(resync = false, resyncTabId = null) {
   }));
 }
 
-function hideXOriginBanner() {
+function hideXOriginBanner(reason = null) {
+  if (reason && bannerReason && bannerReason !== reason) return;
   const banner = $('#xorigin-banner');
   if (banner) banner.hidden = true;
+  bannerReason = null;
+}
+
+function syncLimitedBanner() {
+  const tab = findTab(selected);
+  const limited = Boolean(tab && !tab.optimistic && tab.recordingStatus === 'limited' && !screencastMode && !screencastTabId && viewMode !== 'overview');
+  if (!limited) {
+    hideXOriginBanner('limited');
+    return;
+  }
+  const docId = tab.documentId || tab.id;
+  if (docId && dismissedLimitedDocs.has(docId)) {
+    hideXOriginBanner('limited');
+    return;
+  }
+  const banner = $('#xorigin-banner');
+  const text = $('#xorigin-banner-text');
+  if (text) text.textContent = '当前页面 DOM 体积超过回放上限，画面已暂停更新';
+  if (banner) banner.hidden = false;
+  bannerReason = 'limited';
 }
 
 function handleCrossOriginFrame(info, replay) {
-  if (mainPlayer !== replay || screencastMode || screencastTabId) { hideXOriginBanner(); return; }
-  if (!info?.visible) { hideXOriginBanner(); return; }
+  if (mainPlayer !== replay || screencastMode || screencastTabId) { hideXOriginBanner('xorigin'); return; }
+  if (!info?.visible) { hideXOriginBanner('xorigin'); return; }
   const docId = replay.documentId;
   const canScreencast = Boolean(selected && state?.browser.ready && !state?.browser.importing && socket?.readyState === WebSocket.OPEN);
   if (info.dominant && canScreencast && docId && !autoScreencastHandledDocs.has(docId)) {
@@ -293,7 +317,8 @@ function handleCrossOriginFrame(info, replay) {
     operation('检测到跨域页面，已自动切换画面直连模式');
     return;
   }
-  if (docId && dismissedXOriginDocs.has(docId)) { hideXOriginBanner(); return; }
+  if (bannerReason === 'limited') return;
+  if (docId && dismissedXOriginDocs.has(docId)) { hideXOriginBanner('xorigin'); return; }
   const banner = $('#xorigin-banner');
   const text = $('#xorigin-banner-text');
   if (text) {
@@ -302,6 +327,7 @@ function handleCrossOriginFrame(info, replay) {
       : '当前页面包含跨域内嵌框，DOM 回放模式无法显示该区域';
   }
   if (banner) banner.hidden = false;
+  bannerReason = 'xorigin';
 }
 
 function desiredScreencastTabId() {
@@ -429,13 +455,16 @@ function renderMain() {
   const tab = findTab(selected);
   const blank = tab?.url === 'about:blank';
   const crashed = tab?.recordingStatus === 'crashed';
+  const limited = tab?.recordingStatus === 'limited';
   $('#main-replay').hidden = !recording || blank || crashed;
   $('#empty-frame').hidden = Boolean(recording) && !blank && !crashed;
-  $('#empty-title').textContent = blank ? '新标签页' : crashed ? '远端标签页已崩溃' : tab ? '正在连接网页' : '没有打开的标签页';
+  $('#empty-title').textContent = blank ? '新标签页' : crashed ? '远端标签页已崩溃' : limited ? '页面超出 DOM 回放上限' : tab ? '正在连接网页' : '没有打开的标签页';
   $('#empty-description').textContent = blank ? '在上方地址栏输入 URL，按 Enter 在 devbox 打开。'
     : crashed ? '页面渲染进程崩溃（通常是内存不足），点击上方 ↻ 刷新即可重建恢复。'
+    : limited ? '当前页面 DOM 快照过大，请切换画面直连模式查看实时画面。'
     : tab?.recordingStatus === 'unsupported' ? '此页面无法录制 DOM；可切换到画面直连模式或访问其他网站。'
     : '点击 ＋ 新建标签页，或等待最新 rrweb 快照。';
+  syncLimitedBanner();
   if (!recording || blank || crashed) return;
   mainPlayer = new LiveReplay($('#main-replay'), recording, {
     ready: replay => { if (mainPlayer === replay) { controller.bind(replay); updateControl(); } },
@@ -456,6 +485,7 @@ function updateControl() {
   controller.setAvailable(!inScreencast && Boolean(mainPlayer));
   controller.setEnabled(!inScreencast && Boolean(mainPlayer?.isReady) && Boolean(state?.browser.ready) &&
     !state?.browser.importing && socket?.readyState === WebSocket.OPEN && tab?.recordingStatus === 'live');
+  syncLimitedBanner();
   updateDrawerIndicators();
   updateNavigation();
 }
@@ -1242,7 +1272,14 @@ $('#xorigin-switch-screencast')?.addEventListener('click', () => {
   operation('已全局开启画面直连模式');
 });
 $('#xorigin-dismiss')?.addEventListener('click', () => {
-  if (mainPlayer?.documentId) {
+  if (bannerReason === 'limited') {
+    const tab = findTab(selected);
+    const docId = tab?.documentId || tab?.id;
+    if (docId) {
+      dismissedLimitedDocs.add(docId);
+      if (dismissedLimitedDocs.size > 100) dismissedLimitedDocs.delete(dismissedLimitedDocs.values().next().value);
+    }
+  } else if (mainPlayer?.documentId) {
     dismissedXOriginDocs.add(mainPlayer.documentId);
     if (dismissedXOriginDocs.size > 100) dismissedXOriginDocs.delete(dismissedXOriginDocs.values().next().value);
   }

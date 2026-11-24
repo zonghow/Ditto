@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RecordingBuffer, RecordingSanitizer, MAX_RECORDING_BYTES, MAX_RECORDING_EVENTS } from '../src/recording.js';
+import {
+  RecordingBuffer,
+  RecordingSanitizer,
+  MAX_RECORDING_BYTES,
+  MAX_RECORDING_EVENTS,
+  EXTERNAL_STYLE_THRESHOLD,
+  EXTERNAL_STYLE_OVERFLOW_BUDGET,
+  EXTERNAL_STYLE_OVERFLOW_THRESHOLD,
+} from '../src/recording.js';
 import { AssetCache } from '../src/assets.js';
 import { BrowserService } from '../src/browser.js';
 
@@ -310,4 +318,141 @@ test('video elements stay inert without media requests while streaming deduplica
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].events[0].data.tag, 'ditto-video');
   assert.equal(emitted[0].events[0].data.payload.dataUrl, 'data:image/webp;base64,UklGRg==');
+});
+
+test('large inline <style> tags and dev-server style-loader floods externalize into AssetCache cleanly', () => {
+  const assets = new AssetCache();
+  const sanitizer = new RecordingSanitizer(assets, 'tab-css', 'http://dev.local:3006/app/page');
+
+  const largeCss = `.hero { background: url("./bg.png"); }\n${'.row { padding: 4px 8px; color: #333; }\n'.repeat(1200)}`;
+  assert.ok(Buffer.byteLength(largeCss, 'utf8') > EXTERNAL_STYLE_THRESHOLD);
+  const mediumCss = i => `.mod-${i} { display: flex; }\n${`.c-${i} { margin: 2px; border: 1px solid #eee; }\n`.repeat(140)}`;
+  assert.ok(Buffer.byteLength(mediumCss(0), 'utf8') > EXTERNAL_STYLE_OVERFLOW_THRESHOLD);
+  assert.ok(Buffer.byteLength(mediumCss(0), 'utf8') < EXTERNAL_STYLE_THRESHOLD);
+
+  // Build a style-loader-like head: 2 identical >32KB styles + 100 medium (~6KB) styles totaling >700KB.
+  const headChildren = [
+    { type: 2, id: 10, tagName: 'style', attributes: { media: 'screen', onload: 'evil()' }, childNodes: [{ type: 3, id: 11, isStyle: true, textContent: largeCss }] },
+    { type: 2, id: 12, tagName: 'style', attributes: { _cssText: largeCss }, childNodes: [] },
+  ];
+  let nextId = 20;
+  for (let i = 0; i < 100; i++) {
+    headChildren.push({
+      type: 2,
+      id: nextId++,
+      tagName: 'style',
+      attributes: {},
+      childNodes: [{ type: 3, id: nextId++, isStyle: true, textContent: mediumCss(i) }],
+    });
+  }
+
+  const snap = sanitizer.event({
+    type: 2,
+    timestamp: 10,
+    data: {
+      initialOffset: { top: 0, left: 0 },
+      node: {
+        type: 0,
+        id: 1,
+        childNodes: [{ type: 2, id: 2, tagName: 'head', attributes: {}, childNodes: headChildren }],
+      },
+    },
+  });
+
+  const outHead = snap.data.node.childNodes[0].childNodes.slice(1); // skip injected CSP meta
+  // Both >32KB styles externalize to <link> with identical deduplicated /api/assets/<id>
+  assert.equal(outHead[0].tagName, 'link');
+  assert.equal(outHead[0].attributes.rel, 'stylesheet');
+  assert.equal(outHead[0].attributes.media, 'screen');
+  assert.equal(outHead[0].attributes.onload, undefined);
+  assert.match(outHead[0].attributes.href, /^\/api\/assets\/[a-f0-9]{36}$/);
+  assert.equal(outHead[0].childNodes.length, 0);
+  assert.equal(outHead[1].tagName, 'link');
+  assert.equal(outHead[1].attributes.href, outHead[0].attributes.href);
+  assert.equal(outHead[1].attributes._cssText, undefined);
+
+  // Stored CSS is sanitized (relative url rewritten to /api/assets/) and source() is null (never refetched)
+  const assetId = outHead[0].attributes.href.split('/').pop();
+  const stored = assets.get(assetId);
+  assert.equal(stored.contentType, 'text/css');
+  assert.match(stored.body.toString('utf8'), /url\("\/api\/assets\/[a-f0-9]{36}"\)/);
+  assert.equal(stored.body.toString('utf8').includes('./bg.png'), false);
+  assert.equal(assets.source(assetId), null);
+
+  // Overflow budget kept the serialized snapshot small despite >700KB of medium <style> tags
+  const externalizedMediumCount = outHead.slice(2).filter(n => n.tagName === 'link').length;
+  assert.ok(externalizedMediumCount > 40, `expected >40 externalized medium styles, got ${externalizedMediumCount}`);
+  assert.ok(Buffer.byteLength(JSON.stringify(snap), 'utf8') < EXTERNAL_STYLE_OVERFLOW_BUDGET + 256 * 1024);
+
+  // Incremental mutation (rrweb MutationBuffer splits <style> and its text child into separate adds)
+  const dynCss = `.dynamic { color: red; }\n${'.cell { padding: 6px; }\n'.repeat(1600)}`;
+  const dynAdd = sanitizer.event({
+    type: 3,
+    timestamp: 20,
+    data: {
+      source: 0,
+      adds: [
+        { parentId: 2, nextId: null, node: { type: 2, id: 900, tagName: 'style', attributes: { id: 'hmr-style' }, childNodes: [] } },
+        { parentId: 900, nextId: null, node: { type: 3, id: 901, isStyle: true, textContent: dynCss } },
+      ],
+      removes: [],
+      texts: [],
+      attributes: [],
+    },
+  });
+  assert.equal(dynAdd.data.adds.length, 1);
+  assert.equal(dynAdd.data.adds[0].node.tagName, 'link');
+  assert.equal(dynAdd.data.adds[0].node.id, 900);
+  assert.equal(dynAdd.data.adds[0].node.attributes.id, 'hmr-style');
+  const dynHref1 = dynAdd.data.adds[0].node.attributes.href;
+  assert.match(dynHref1, /^\/api\/assets\/[a-f0-9]{36}$/);
+
+  // HMR text mutation on the externalized style child rewrites to href attribute update on the <link>
+  const dynHmr = sanitizer.event({
+    type: 3,
+    timestamp: 21,
+    data: {
+      source: 0,
+      adds: [],
+      removes: [],
+      texts: [{ id: 901, value: '.dynamic { color: blue; }' }],
+      attributes: [],
+    },
+  });
+  assert.equal(dynHmr.data.texts.length, 0);
+  assert.equal(dynHmr.data.attributes.length, 1);
+  assert.equal(dynHmr.data.attributes[0].id, 900);
+  assert.match(dynHmr.data.attributes[0].attributes.href, /^\/api\/assets\/[a-f0-9]{36}$/);
+  assert.notEqual(dynHmr.data.attributes[0].attributes.href, dynHref1);
+
+  // Late large text child appended to an initially empty inline <style> uses @import url("/api/assets/...")
+  const emptyStyleAdd = sanitizer.event({
+    type: 3,
+    timestamp: 22,
+    data: {
+      source: 0,
+      adds: [{ parentId: 2, nextId: null, node: { type: 2, id: 950, tagName: 'style', attributes: {}, childNodes: [] } }],
+      removes: [],
+      texts: [],
+      attributes: [],
+    },
+  });
+  assert.equal(emptyStyleAdd.data.adds[0].node.tagName, 'style');
+  const lateTextAdd = sanitizer.event({
+    type: 3,
+    timestamp: 23,
+    data: {
+      source: 0,
+      adds: [{ parentId: 950, nextId: null, node: { type: 3, id: 951, isStyle: true, textContent: dynCss } }],
+      removes: [],
+      texts: [],
+      attributes: [],
+    },
+  });
+  assert.match(lateTextAdd.data.adds[0].node.textContent, /^@import url\("\/api\/assets\/[a-f0-9]{36}"\);$/);
+
+  // Closing the tab releases all externalized CSS bytes
+  assert.ok(assets.bytes > 0);
+  assets.removeScope('tab-css');
+  assert.equal(assets.bytes, 0);
 });

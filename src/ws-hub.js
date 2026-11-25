@@ -10,13 +10,20 @@ export const MAX_SCREENCAST_BUFFERED_BYTES = 512 * 1024;
 // Binary screencast wire format:
 //   [4-byte uint32BE headerLength][UTF-8 JSON metadata header][raw JPEG bytes]
 export function encodeBinaryScreencastFrame(frame) {
-  const headerJson = JSON.stringify({
+  const header = {
     type: 'screencast-frame',
     tabId: frame.tabId,
     width: frame.width,
     height: frame.height,
     timestamp: frame.timestamp,
-  });
+  };
+  if (Number.isFinite(frame.viewportWidth) && frame.viewportWidth > 0) header.viewportWidth = frame.viewportWidth;
+  if (Number.isFinite(frame.viewportHeight) && frame.viewportHeight > 0) header.viewportHeight = frame.viewportHeight;
+  if (Number.isFinite(frame.offsetTop) && frame.offsetTop > 0) header.offsetTop = frame.offsetTop;
+  if (Number.isFinite(frame.pageScaleFactor) && frame.pageScaleFactor > 0 && frame.pageScaleFactor !== 1) {
+    header.pageScaleFactor = frame.pageScaleFactor;
+  }
+  const headerJson = JSON.stringify(header);
   const headerBuf = Buffer.from(headerJson, 'utf8');
   const jpegBuf = Buffer.isBuffer(frame.rawBuffer)
     ? frame.rawBuffer

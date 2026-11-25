@@ -5,9 +5,20 @@ import { validateScreencastInput, dispatchScreencastInput } from './screencast.j
 
 export function performScreencastInput(browser, id, input) {
   const command = validateScreencastInput(input);
-  if (command.action === 'mousemove' && browser.controlBacklog) return Promise.resolve({ ok: true, skipped: true });
+  if (command.action === 'mousemove' && browser.queuedScreencastMove &&
+    browser.queuedScreencastMove.tabId === command.tabId) {
+    browser.queuedScreencastMove.x = command.x;
+    browser.queuedScreencastMove.y = command.y;
+    browser.queuedScreencastMove.frameWidth = command.frameWidth;
+    browser.queuedScreencastMove.frameHeight = command.frameHeight;
+    return Promise.resolve({ ok: true, coalesced: true });
+  }
   if (command.action === 'wheel' && browser.queuedWheel &&
     browser.queuedWheel.screencast && browser.queuedWheel.tabId === command.tabId) {
+    browser.queuedWheel.x = command.x;
+    browser.queuedWheel.y = command.y;
+    browser.queuedWheel.frameWidth = command.frameWidth;
+    browser.queuedWheel.frameHeight = command.frameHeight;
     browser.queuedWheel.deltaX = Math.max(-4000, Math.min(4000, browser.queuedWheel.deltaX + command.deltaX));
     browser.queuedWheel.deltaY = Math.max(-4000, Math.min(4000, browser.queuedWheel.deltaY + command.deltaY));
     return Promise.resolve({ ok: true, coalesced: true });
@@ -17,12 +28,24 @@ export function performScreencastInput(browser, id, input) {
     throw new InputError('远端操作正在处理中，请稍后重试。', 429);
   }
   browser.controlBacklog++;
+  if (command.action === 'mousemove') {
+    browser.queuedScreencastMove = command;
+  } else {
+    browser.queuedScreencastMove = null;
+  }
   if (command.action === 'wheel') { command.screencast = true; browser.queuedWheel = command; }
   const operation = browser.controlQueue.then(() => {
     if (browser.queuedWheel === command) browser.queuedWheel = null;
-    return dispatchScreencastInput(browser.tabs.get(command.tabId), command, browser.viewport);
+    if (browser.queuedScreencastMove === command) browser.queuedScreencastMove = null;
+    return dispatchScreencastInput(
+      browser.tabs.get(command.tabId),
+      command,
+      browser.viewport,
+      browser.screencast?.getFrameMetrics?.(command.tabId) || null,
+    );
   }).finally(() => {
     if (browser.queuedWheel === command) browser.queuedWheel = null;
+    if (browser.queuedScreencastMove === command) browser.queuedScreencastMove = null;
     browser.controlBacklog--;
   });
   browser.controlQueue = operation.catch(() => {});

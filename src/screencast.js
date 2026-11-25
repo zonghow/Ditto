@@ -9,6 +9,33 @@ const ALLOWED_KEYS = new Set([
 const ALLOWED_MODIFIERS = new Set(['Control', 'Meta', 'Alt', 'Shift']);
 const ALLOWED_ACTIONS = new Set(['mousedown', 'mousemove', 'mouseup', 'click', 'wheel', 'key', 'text']);
 
+export function computeScreencastFrameGeometry(frame, fallbackViewport) {
+  const vpW = Math.max(1, Number(frame?.viewportWidth || fallbackViewport?.width) || 1280);
+  const vpH = Math.max(1, Number(frame?.viewportHeight || fallbackViewport?.height) || 800);
+  const deviceWidth = Math.max(1, Number(frame?.width || frame?.deviceWidth) || vpW);
+  const deviceHeight = Math.max(1, Number(frame?.height || frame?.deviceHeight) || vpH);
+  const rawOffsetTop = Number(frame?.offsetTop);
+  const offsetTop = Number.isFinite(rawOffsetTop) && rawOffsetTop > 0 && rawOffsetTop < deviceHeight ? rawOffsetTop : 0;
+  const rawScale = Number(frame?.pageScaleFactor);
+  const pageScaleFactor = Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1;
+  const capturedWidth = deviceWidth / pageScaleFactor;
+  const capturedHeight = Math.max(1, (deviceHeight - offsetTop) / pageScaleFactor);
+  const coordWidth = Math.min(capturedWidth, vpW);
+  const coordHeight = Math.min(capturedHeight, vpH);
+  return {
+    deviceWidth,
+    deviceHeight,
+    offsetTop,
+    pageScaleFactor,
+    viewportWidth: vpW,
+    viewportHeight: vpH,
+    capturedWidth,
+    capturedHeight,
+    coordWidth,
+    coordHeight,
+  };
+}
+
 export function validateScreencastInput(input) {
   if (!input || typeof input !== 'object' || !ALLOWED_ACTIONS.has(input.action)) {
     throw new InputError('不支持的画面模式操作。');
@@ -23,6 +50,13 @@ export function validateScreencastInput(input) {
     }
     clean.x = input.x;
     clean.y = input.y;
+    if (input.frameWidth !== undefined || input.frameHeight !== undefined) {
+      if (![input.frameWidth, input.frameHeight].every(v => Number.isFinite(v) && v >= 1 && v <= 7680)) {
+        throw new InputError('画面尺寸参数无效。');
+      }
+      clean.frameWidth = input.frameWidth;
+      clean.frameHeight = input.frameHeight;
+    }
   }
   if (['mousedown', 'mouseup', 'click'].includes(input.action)) {
     clean.button = input.button ?? 'left';
@@ -63,7 +97,7 @@ export function validateScreencastInput(input) {
 }
 
 export class ScreencastManager extends EventEmitter {
-  sessions = new Map(); // tabId -> { viewers: Set<string>, cdp, handler, lastFrame }
+  sessions = new Map(); // tabId -> { tab, viewers: Set<string>, cdp, handler, lastFrame, syncedBoundsKey, syncingBounds, browserCdp }
 
   hasViewers(tabId) {
     return (this.sessions.get(tabId)?.viewers.size || 0) > 0;
@@ -73,7 +107,65 @@ export class ScreencastManager extends EventEmitter {
     return Boolean(this.sessions.get(tabId)?.viewers.has(viewerId));
   }
 
-  async enable(tab, viewerId, viewport) {
+  getFrameMetrics(tabId) {
+    const frame = this.sessions.get(tabId)?.lastFrame;
+    if (!frame) return null;
+    return {
+      width: frame.width,
+      height: frame.height,
+      viewportWidth: frame.viewportWidth,
+      viewportHeight: frame.viewportHeight,
+      offsetTop: frame.offsetTop,
+      pageScaleFactor: frame.pageScaleFactor,
+    };
+  }
+
+  startParams(vp) {
+    return {
+      format: 'jpeg',
+      quality: 75,
+      maxWidth: Math.min(2560, Math.max(640, vp.width)),
+      maxHeight: Math.min(1440, Math.max(360, vp.height)),
+      everyNthFrame: 1,
+    };
+  }
+
+  async syncWindowBounds(session, vp, metadata) {
+    if (!session || session.syncingBounds || !vp?.width || !vp?.height) return;
+    const deviceWidth = metadata?.deviceWidth;
+    const deviceHeight = metadata?.deviceHeight;
+    if (!deviceWidth || !deviceHeight) return;
+    if (Math.abs(deviceWidth - vp.width) <= 1 && Math.abs(deviceHeight - vp.height) <= 1) return;
+    const key = `${vp.width}x${vp.height}`;
+    if (session.syncedBoundsKey === key) return;
+    const bcdp = typeof session.getBrowserCdp === 'function' ? session.getBrowserCdp() : null;
+    if (!bcdp) return;
+    session.syncingBounds = true;
+    session.syncedBoundsKey = key;
+    try {
+      const targetId = session.tab?.targetId
+        || (await session.cdp.send('Target.getTargetInfo').catch(() => null))?.targetInfo?.targetId;
+      if (!targetId) return;
+      const win = await bcdp.send('Browser.getWindowForTarget', { targetId }).catch(() => null);
+      if (!win?.windowId) return;
+      const current = await bcdp.send('Browser.getWindowBounds', { windowId: win.windowId }).catch(() => null);
+      const curW = current?.bounds?.width || 0;
+      const curH = current?.bounds?.height || 0;
+      const insetW = curW >= deviceWidth && curW - deviceWidth <= 64 ? curW - deviceWidth : 0;
+      const insetH = curH >= deviceHeight && curH - deviceHeight <= 200 ? curH - deviceHeight : 0;
+      await bcdp.send('Browser.setWindowBounds', {
+        windowId: win.windowId,
+        bounds: {
+          width: vp.width + insetW,
+          height: vp.height + insetH,
+        },
+      }).catch(() => {});
+    } finally {
+      session.syncingBounds = false;
+    }
+  }
+
+  async enable(tab, viewerId, viewport, { getBrowserCdp } = {}) {
     if (!tab || tab.hidden || tab.page.isClosed() || tab.crashed) {
       throw new InputError('该标签页当前不可使用画面直连模式。', 409);
     }
@@ -96,39 +188,78 @@ export class ScreencastManager extends EventEmitter {
     }
     await tab.page.bringToFront?.().catch(() => {});
     const cdp = tab.cdp;
-    const vp = tab.page.viewportSize() || viewport || { width: 1280, height: 800 };
-    session = { viewers: new Set([viewerId]), cdp, handler: null, lastFrame: null };
+    const fallbackVp = viewport || { width: 1280, height: 800 };
+    const vp = tab.page.viewportSize() || fallbackVp;
+    session = {
+      tab,
+      viewers: new Set([viewerId]),
+      cdp,
+      handler: null,
+      lastFrame: null,
+      syncedBoundsKey: null,
+      syncingBounds: false,
+      getBrowserCdp,
+      fallbackVp,
+    };
     const handler = params => {
       cdp.send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+      const curVp = tab.page.viewportSize() || session.fallbackVp || { width: 1280, height: 800 };
+      const rawOffsetTop = Number(params.metadata?.offsetTop);
+      const rawScale = Number(params.metadata?.pageScaleFactor);
       const frame = {
         type: 'screencast-frame',
         tabId: tab.id,
         data: params.data,
         rawBuffer: Buffer.from(params.data, 'base64'),
-        width: params.metadata?.deviceWidth || vp.width,
-        height: params.metadata?.deviceHeight || vp.height,
+        width: params.metadata?.deviceWidth || curVp.width,
+        height: params.metadata?.deviceHeight || curVp.height,
+        viewportWidth: curVp.width,
+        viewportHeight: curVp.height,
+        offsetTop: Number.isFinite(rawOffsetTop) && rawOffsetTop > 0 ? rawOffsetTop : 0,
+        pageScaleFactor: Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1,
         timestamp: Date.now(),
       };
       session.lastFrame = frame;
       this.emit('frame', frame);
+      this.syncWindowBounds(session, curVp, params.metadata).catch(() => {});
     };
     session.handler = handler;
     this.sessions.set(tab.id, session);
     cdp.on('Page.screencastFrame', handler);
     try {
-      await cdp.send('Page.startScreencast', {
-        format: 'jpeg',
-        quality: 75,
-        maxWidth: Math.min(1920, Math.max(640, vp.width)),
-        maxHeight: Math.min(1080, Math.max(360, vp.height)),
-        everyNthFrame: 1,
-      });
+      await cdp.send('Page.startScreencast', this.startParams(vp));
     } catch {
       cdp.off('Page.screencastFrame', handler);
       this.sessions.delete(tab.id);
       throw new InputError('当前页面不支持画面直连模式。', 409);
     }
     return true;
+  }
+
+  async updateViewport(tabId, viewport) {
+    const session = this.sessions.get(tabId);
+    if (!session || !viewport?.width || !viewport?.height) return;
+    session.fallbackVp = viewport;
+    session.syncedBoundsKey = null;
+    if (session.tab?.page?.isClosed?.()) return;
+    try {
+      await session.cdp.send('Page.stopScreencast').catch(() => {});
+      if (this.sessions.get(tabId) !== session) return;
+      await session.cdp.send('Page.startScreencast', this.startParams(viewport));
+    } catch { /* ignore transient resize errors */ }
+  }
+
+  resyncBounds() {
+    for (const session of this.sessions.values()) {
+      session.syncedBoundsKey = null;
+      if (session.lastFrame) {
+        const curVp = session.tab?.page?.viewportSize?.() || session.fallbackVp;
+        this.syncWindowBounds(session, curVp, {
+          deviceWidth: session.lastFrame.width,
+          deviceHeight: session.lastFrame.height,
+        }).catch(() => {});
+      }
+    }
   }
 
   async disable(tabId, viewerId) {
@@ -165,7 +296,24 @@ export class ScreencastManager extends EventEmitter {
   }
 }
 
-export async function dispatchScreencastInput(tab, command, fallbackViewport) {
+export function resolveScreencastPoint(command, viewport, frameMetrics) {
+  const vpW = Math.max(1, Number(viewport?.width) || 1280);
+  const vpH = Math.max(1, Number(viewport?.height) || 800);
+  const geometry = frameMetrics ? computeScreencastFrameGeometry(frameMetrics, { width: vpW, height: vpH }) : null;
+  const maxW = Math.max(vpW, geometry?.capturedWidth || vpW);
+  const maxH = Math.max(vpH, geometry?.capturedHeight || vpH);
+  const coordW = Number.isFinite(command.frameWidth)
+    ? Math.min(maxW, Math.max(1, command.frameWidth))
+    : (geometry?.coordWidth || vpW);
+  const coordH = Number.isFinite(command.frameHeight)
+    ? Math.min(maxH, Math.max(1, command.frameHeight))
+    : (geometry?.coordHeight || vpH);
+  const x = Math.min(Math.max(0, vpW - 0.5), Math.max(0, command.x * coordW));
+  const y = Math.min(Math.max(0, vpH - 0.5), Math.max(0, command.y * coordH));
+  return { x, y };
+}
+
+export async function dispatchScreencastInput(tab, command, fallbackViewport, frameMetrics = null) {
   if (!tab || tab.hidden || tab.page.isClosed() || tab.crashed) {
     throw new InputError('标签页已关闭或崩溃。', 409);
   }
@@ -177,21 +325,24 @@ export async function dispatchScreencastInput(tab, command, fallbackViewport) {
     await tab.page.bringToFront();
   }
   if (command.action === 'mousedown') {
-    await tab.page.mouse.move(command.x * vp.width, command.y * vp.height);
+    const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
+    await tab.page.mouse.move(x, y);
     await tab.page.mouse.down({ button: command.button });
   } else if (command.action === 'mousemove') {
-    await tab.page.mouse.move(command.x * vp.width, command.y * vp.height);
+    const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
+    await tab.page.mouse.move(x, y);
   } else if (command.action === 'mouseup') {
-    await tab.page.mouse.move(command.x * vp.width, command.y * vp.height);
+    const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
+    await tab.page.mouse.move(x, y);
     await tab.page.mouse.up({ button: command.button });
   } else if (command.action === 'click') {
-    await tab.page.mouse.click(command.x * vp.width, command.y * vp.height, {
+    const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
+    await tab.page.mouse.click(x, y, {
       button: command.button,
       clickCount: command.clickCount,
     });
   } else if (command.action === 'wheel') {
-    const x = command.x * vp.width;
-    const y = command.y * vp.height;
+    const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
     if (tab.cdp) {
       await tab.cdp.send('Input.dispatchMouseEvent', {
         type: 'mouseWheel',

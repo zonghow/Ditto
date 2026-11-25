@@ -680,6 +680,64 @@ try {
     await observer.locator('#devtools-close').click();
     await observer.locator('#devtools-panel').waitFor({ state: 'hidden' });
     checks.push('built-in viewer DevTools streams Console/Network logs and evaluates JS expressions with expandable object trees');
+    // End-to-end Screencast mouse alignment check (proves 0px drift even when compositor surface != viewport)
+    await observedTab.page.evaluate(() => {
+      let marker = document.getElementById('ditto-sc-marker');
+      if (!marker) {
+        marker = document.createElement('div');
+        marker.id = 'ditto-sc-marker';
+        marker.style.cssText = 'position:fixed;left:600px;top:380px;width:24px;height:24px;background:#00ff00;z-index:2147483647;';
+        document.body.appendChild(marker);
+      }
+      window.__scHit = null;
+      document.addEventListener('mousedown', e => { window.__scHit = { x: e.clientX, y: e.clientY }; });
+    });
+    await observer.locator('#drawer-toggle').click();
+    await observer.locator('#control-drawer.open').waitFor({ state: 'visible' });
+    await observer.locator('label.drawer-switch:has(#screencast-toggle)').click();
+    await observer.locator('#drawer-close').click();
+    await observer.locator('#screencast-stage').waitFor({ state: 'visible' });
+    await observedTab.page.evaluate(() => { document.body.style.opacity = '0.99'; });
+    await observer.waitForFunction(() => {
+      const c = document.getElementById('screencast-canvas');
+      if (!c || c.width < 100 || c.height < 100) return false;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 1] > 210 && d[i] < 60 && d[i + 2] < 60) return true;
+      }
+      return false;
+    }, { timeout: 6000 });
+    const scTarget = await observer.evaluate(() => {
+      const c = document.getElementById('screencast-canvas');
+      const rect = c.getBoundingClientRect();
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let sx = 0, sy = 0, n = 0;
+      for (let y = 0; y < c.height; y++) {
+        for (let x = 0; x < c.width; x++) {
+          const i = (y * c.width + x) * 4;
+          if (d[i + 1] > 210 && d[i] < 60 && d[i + 2] < 60) { sx += x; sy += y; n++; }
+        }
+      }
+      const cx = sx / n;
+      const cy = sy / n;
+      return {
+        clientX: rect.left + (cx / c.width) * rect.width,
+        clientY: rect.top + (cy / c.height) * rect.height,
+        n,
+      };
+    });
+    assert.ok(scTarget.n > 10, `Expected green marker pixels on screencast canvas, got ${scTarget.n}`);
+    await observer.mouse.click(scTarget.clientX, scTarget.clientY);
+    await observedTab.page.waitForFunction(() => Boolean(window.__scHit), { timeout: 4000 });
+    const scHit = await observedTab.page.evaluate(() => window.__scHit);
+    assert.ok(Math.abs(scHit.x - 612) <= 4 && Math.abs(scHit.y - 392) <= 4,
+      `Screencast mouse hit misaligned: got (${scHit.x}, ${scHit.y}), expected ~(612, 392)`);
+    await observer.locator('#drawer-toggle').click();
+    await observer.locator('#control-drawer.open').waitFor({ state: 'visible' });
+    await observer.locator('label.drawer-switch:has(#screencast-toggle)').click();
+    await observer.locator('#drawer-close').click();
+    await observer.locator('#screencast-stage').waitFor({ state: 'hidden' });
+    checks.push('screencast mouse clicks hit exact remote CSS coordinates without drift');
     assert.deepEqual(pageErrors, []);
     await observer.setViewportSize({ width: 390, height: 844 });
     const overflow = await observer.evaluate(() => ({

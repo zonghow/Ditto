@@ -13,7 +13,12 @@ const execFileAsync = promisify(execFile);
 import { normalizeSnapshot, snapshotSummary } from '../src/snapshot.js';
 import { CookieRequests } from '../src/cookie-requests.js';
 import { AssetCache } from '../src/assets.js';
-import { ScreencastManager, validateScreencastInput } from '../src/screencast.js';
+import {
+  ScreencastManager,
+  computeScreencastFrameGeometry,
+  resolveScreencastPoint,
+  validateScreencastInput,
+} from '../src/screencast.js';
 import { BrowserService, ensureThirdPartyStoragePrefs } from '../src/browser.js';
 import { importSnapshotToBrowser } from '../src/import-snapshot.js';
 import { RecordingBuffer, serializeRecordingMessage } from '../src/recording.js';
@@ -172,9 +177,98 @@ test('validateScreencastInput accepts drag/scroll/text/key and blocks browser sh
   assert.deepEqual(validateScreencastInput({ tabId: 't1', action: 'mousemove', x: 0.8, y: 0.5 }), {
     action: 'mousemove', tabId: 't1', x: 0.8, y: 0.5,
   });
+  assert.deepEqual(validateScreencastInput({ tabId: 't1', action: 'mousemove', x: 0.5, y: 0.5, frameWidth: 1400, frameHeight: 763 }), {
+    action: 'mousemove', tabId: 't1', x: 0.5, y: 0.5, frameWidth: 1400, frameHeight: 763,
+  });
   assert.throws(() => validateScreencastInput({ tabId: 't1', action: 'click', x: 1.5, y: 0.2 }));
+  assert.throws(() => validateScreencastInput({ tabId: 't1', action: 'click', x: 0.5, y: 0.5, frameWidth: 0, frameHeight: 500 }));
   assert.throws(() => validateScreencastInput({ tabId: 't1', action: 'key', key: 'w', modifiers: ['Control'] }));
   assert.throws(() => validateScreencastInput({ tabId: 't1', action: 'eval', value: '1+1' }));
+});
+
+test('screencast coordinate mapping stays exact when compositor surface differs from emulated viewport', () => {
+  // Case 1: Chromium headless=new crops bottom 87px (deviceHeight 713 vs viewport 800)
+  const cropped = computeScreencastFrameGeometry(
+    { width: 1000, height: 713, viewportWidth: 1000, viewportHeight: 800, offsetTop: 0, pageScaleFactor: 1 },
+    { width: 1000, height: 800 },
+  );
+  assert.equal(cropped.coordWidth, 1000);
+  assert.equal(cropped.coordHeight, 713);
+  const hitCropped = resolveScreencastPoint(
+    { x: 0.5, y: 390 / 713 },
+    { width: 1000, height: 800 },
+    { width: 1000, height: 713, viewportWidth: 1000, viewportHeight: 800 },
+  );
+  assert.equal(Math.round(hitCropped.x), 500);
+  assert.equal(Math.round(hitCropped.y), 390);
+
+  // Case 2: Browser window bounds (1920x993) exceed emulated viewport (1711x898);
+  // client crops dead padding so canvas spans exact viewport (1711x898).
+  const padded = computeScreencastFrameGeometry(
+    { width: 1920, height: 993, viewportWidth: 1711, viewportHeight: 898, offsetTop: 0, pageScaleFactor: 1 },
+    { width: 1711, height: 898 },
+  );
+  assert.equal(padded.coordWidth, 1711);
+  assert.equal(padded.coordHeight, 898);
+  const hitPadded = resolveScreencastPoint(
+    { x: 855 / 1711, y: 449 / 898, frameWidth: 1711, frameHeight: 898 },
+    { width: 1711, height: 898 },
+    { width: 1920, height: 993, viewportWidth: 1711, viewportHeight: 898 },
+  );
+  assert.equal(Math.round(hitPadded.x), 855);
+  assert.equal(Math.round(hitPadded.y), 449);
+
+  // Binary frame header preserves optional viewport geometry when present.
+  const pkt = encodeBinaryScreencastFrame({
+    tabId: 't2', width: 1920, height: 993, viewportWidth: 1711, viewportHeight: 898, timestamp: 123, rawBuffer: Buffer.from([1, 2]),
+  });
+  const hdrLen = pkt.readUInt32BE(0);
+  const hdr = JSON.parse(pkt.subarray(4, 4 + hdrLen).toString('utf8'));
+  assert.deepEqual(hdr, {
+    type: 'screencast-frame', tabId: 't2', width: 1920, height: 993, viewportWidth: 1711, viewportHeight: 898, timestamp: 123,
+  });
+});
+
+test('performScreencastInput coalesces mousemove without dropping final position or reordering around mousedown', async () => {
+  const browser = new BrowserService({ viewport: { width: 1000, height: 800 } });
+  browser.ready = true;
+  const events = [];
+  let releaseFirst;
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  const tab = {
+    id: 'sc-tab',
+    hidden: false,
+    crashed: false,
+    page: {
+      isClosed: () => false,
+      viewportSize: () => ({ width: 1000, height: 800 }),
+      bringToFront: async () => {},
+      mouse: {
+        move: async (x, y) => {
+          events.push({ type: 'move', x: Math.round(x), y: Math.round(y) });
+          if (events.length === 1) await firstGate;
+        },
+        down: async () => { events.push({ type: 'down' }); },
+      },
+    },
+  };
+  browser.tabs.set('sc-tab', tab);
+  const p1 = browser.performScreencastInput('v1', { tabId: 'sc-tab', action: 'mousemove', x: 0.1, y: 0.1 });
+  await Promise.resolve();
+  const p2 = browser.performScreencastInput('v1', { tabId: 'sc-tab', action: 'mousemove', x: 0.2, y: 0.2 });
+  const p3 = browser.performScreencastInput('v1', { tabId: 'sc-tab', action: 'mousemove', x: 0.3, y: 0.3 });
+  const p4 = browser.performScreencastInput('v1', { tabId: 'sc-tab', action: 'mousedown', x: 0.4, y: 0.4 });
+  const p5 = browser.performScreencastInput('v1', { tabId: 'sc-tab', action: 'mousemove', x: 0.5, y: 0.5 });
+  releaseFirst();
+  await Promise.all([p1, p2, p3, p4, p5]);
+  // p2 was coalesced into p3 (300,300), mousedown runs at (400,400), then p5 runs AFTER mousedown at (500,500)
+  assert.deepEqual(events, [
+    { type: 'move', x: 100, y: 80 },
+    { type: 'move', x: 300, y: 240 },
+    { type: 'move', x: 400, y: 320 },
+    { type: 'down' },
+    { type: 'move', x: 500, y: 400 },
+  ]);
 });
 
 test('accept-dialog and dismiss-dialog handle alert, confirm, and prompt dialogs cleanly', async () => {

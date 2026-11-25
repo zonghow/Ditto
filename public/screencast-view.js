@@ -14,9 +14,13 @@ export class ScreencastView {
     this.tabId = null;
     this.width = 1920;
     this.height = 1080;
+    this.coordWidth = null;
+    this.coordHeight = null;
     this.dragging = false;
     this.lastInputAt = 0;
     this.lastMove = 0;
+    this.pendingMove = null;
+    this.moveTimer = null;
     this.lastWheelSent = 0;
     this.pendingWheel = null;
     this.wheelTimer = null;
@@ -24,13 +28,14 @@ export class ScreencastView {
     this.queuedBinary = null;
     this.frameToken = 0;
     this.lastObjectUrl = null;
+    this.pendingImageMeta = null;
     this.frameImage = new Image();
     this.frameImage.onload = () => {
       const prevUrl = this.lastObjectUrl;
       this.lastObjectUrl = null;
       if (prevUrl) URL.revokeObjectURL(prevUrl);
       if (!this.active) return;
-      this.drawSource(this.frameImage, this.frameImage.naturalWidth, this.frameImage.naturalHeight);
+      this.drawSource(this.frameImage, this.frameImage.naturalWidth, this.frameImage.naturalHeight, this.pendingImageMeta);
     };
     this.frameImage.onerror = () => {
       const prevUrl = this.lastObjectUrl;
@@ -43,15 +48,42 @@ export class ScreencastView {
     this.bindEvents();
   }
 
-  drawSource(source, width, height) {
+  drawSource(source, width, height, meta = null) {
     if (!width || !height) return;
-    const resized = this.canvas.width !== width || this.canvas.height !== height;
+    const deviceW = Number(meta?.width) > 0 ? Number(meta.width) : (this.width || width);
+    const deviceH = Number(meta?.height) > 0 ? Number(meta.height) : (this.height || height);
+    const offsetTop = Number.isFinite(meta?.offsetTop) && meta.offsetTop > 0 && meta.offsetTop < deviceH
+      ? Number(meta.offsetTop) : 0;
+    const scaleFactor = Number.isFinite(meta?.pageScaleFactor) && meta.pageScaleFactor > 0
+      ? Number(meta.pageScaleFactor) : 1;
+    const capturedCssW = deviceW / scaleFactor;
+    const capturedCssH = Math.max(1, (deviceH - offsetTop) / scaleFactor);
+    const vpW = Number(meta?.viewportWidth) > 0 ? Number(meta.viewportWidth) : capturedCssW;
+    const vpH = Number(meta?.viewportHeight) > 0 ? Number(meta.viewportHeight) : capturedCssH;
+
+    // Crop dead padding when Chromium's compositor window exceeds the emulated viewport.
+    const srcY = offsetTop > 0 ? Math.min(height - 1, Math.round(height * (offsetTop / deviceH))) : 0;
+    const availH = Math.max(1, height - srcY);
+    const cropRatioX = Math.min(1, vpW / capturedCssW);
+    const cropRatioY = Math.min(1, vpH / capturedCssH);
+    const srcW = Math.max(1, Math.min(width, Math.round(width * cropRatioX)));
+    const srcH = Math.max(1, Math.min(availH, Math.round(availH * cropRatioY)));
+
+    // Record exact CSS coordinate span represented by the drawn canvas so input
+    // mapping stays 1:1 even when frames are scaled, cropped, or resized in flight.
+    const nextCoordW = capturedCssW * (srcW / width);
+    const nextCoordH = capturedCssH * (srcH / availH);
+    const coordChanged = this.coordWidth !== nextCoordW || this.coordHeight !== nextCoordH;
+    this.coordWidth = nextCoordW;
+    this.coordHeight = nextCoordH;
+
+    const resized = this.canvas.width !== srcW || this.canvas.height !== srcH;
     if (resized) {
-      this.canvas.width = width;
-      this.canvas.height = height;
+      this.canvas.width = srcW;
+      this.canvas.height = srcH;
     }
-    this.ctx.drawImage(source, 0, 0);
-    if (resized || !this.canvas.style.width) this.fit();
+    this.ctx.drawImage(source, 0, srcY, srcW, srcH, 0, 0, srcW, srcH);
+    if (resized || coordChanged || !this.canvas.style.width) this.fit();
   }
 
   coords(event) {
@@ -59,7 +91,17 @@ export class ScreencastView {
     if (!rect.width || !rect.height) return null;
     const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
     const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    if (Number.isFinite(this.coordWidth) && this.coordWidth > 0 &&
+      Number.isFinite(this.coordHeight) && this.coordHeight > 0) {
+      return { x, y, frameWidth: this.coordWidth, frameHeight: this.coordHeight };
+    }
     return { x, y };
+  }
+
+  clearPendingMove() {
+    clearTimeout(this.moveTimer);
+    this.moveTimer = null;
+    this.pendingMove = null;
   }
 
   buttonName(button) {
@@ -75,6 +117,7 @@ export class ScreencastView {
       this.canvas.focus({ preventScroll: true });
       const pt = this.coords(event);
       if (!pt) return;
+      this.clearPendingMove();
       this.dragging = true;
       this.lastInputAt = Date.now();
       try { this.canvas.setPointerCapture(event.pointerId); } catch {}
@@ -82,16 +125,35 @@ export class ScreencastView {
     });
     this.canvas.addEventListener('pointermove', event => {
       if (!this.active || !this.tabId) return;
-      const now = Date.now();
-      const minGap = this.dragging ? 20 : 40;
-      if (now - this.lastMove < minGap) return;
-      this.lastMove = now;
       const pt = this.coords(event);
-      if (pt) this.send({ type: 'screencast-input', tabId: this.tabId, action: 'mousemove', ...pt });
+      if (!pt) return;
+      const now = Date.now();
+      const minGap = this.dragging ? 16 : 32;
+      if (!this.moveTimer && now - this.lastMove >= minGap) {
+        this.lastMove = now;
+        this.pendingMove = null;
+        this.send({ type: 'screencast-input', tabId: this.tabId, action: 'mousemove', ...pt });
+        return;
+      }
+      // Trailing flush guarantees final hover/drag position always reaches Chromium.
+      this.pendingMove = pt;
+      if (!this.moveTimer) {
+        const wait = Math.max(4, minGap - (now - this.lastMove));
+        this.moveTimer = setTimeout(() => {
+          this.moveTimer = null;
+          const item = this.pendingMove;
+          this.pendingMove = null;
+          if (item && this.active && this.tabId) {
+            this.lastMove = Date.now();
+            this.send({ type: 'screencast-input', tabId: this.tabId, action: 'mousemove', ...item });
+          }
+        }, wait);
+      }
     });
     const endDrag = event => {
       if (!this.active || !this.tabId || !this.dragging) return;
       this.dragging = false;
+      this.clearPendingMove();
       try { this.canvas.releasePointerCapture(event.pointerId); } catch {}
       const pt = this.coords(event);
       if (pt) this.send({ type: 'screencast-input', tabId: this.tabId, action: 'mouseup', ...pt, button: this.buttonName(event.button) });
@@ -117,6 +179,8 @@ export class ScreencastView {
       if (this.pendingWheel) {
         this.pendingWheel.x = pt.x;
         this.pendingWheel.y = pt.y;
+        this.pendingWheel.frameWidth = pt.frameWidth;
+        this.pendingWheel.frameHeight = pt.frameHeight;
         this.pendingWheel.deltaX = Math.max(-4000, Math.min(4000, this.pendingWheel.deltaX + dx));
         this.pendingWheel.deltaY = Math.max(-4000, Math.min(4000, this.pendingWheel.deltaY + dy));
       } else {
@@ -169,6 +233,9 @@ export class ScreencastView {
     this.queuedBinary = null;
     if (switching) {
       this.dragging = false;
+      this.coordWidth = null;
+      this.coordHeight = null;
+      this.clearPendingMove();
       clearTimeout(this.wheelTimer);
       this.wheelTimer = null;
       this.pendingWheel = null;
@@ -184,12 +251,16 @@ export class ScreencastView {
     this.active = false;
     this.tabId = null;
     this.dragging = false;
+    this.coordWidth = null;
+    this.coordHeight = null;
     this.frameToken++;
     this.queuedBinary = null;
+    this.pendingImageMeta = null;
     if (this.lastObjectUrl) {
       URL.revokeObjectURL(this.lastObjectUrl);
       this.lastObjectUrl = null;
     }
+    this.clearPendingMove();
     clearTimeout(this.wheelTimer);
     this.wheelTimer = null;
     this.pendingWheel = null;
@@ -207,6 +278,7 @@ export class ScreencastView {
       const url = URL.createObjectURL(blob);
       if (this.lastObjectUrl) URL.revokeObjectURL(this.lastObjectUrl);
       this.lastObjectUrl = url;
+      this.pendingImageMeta = meta;
       this.frameImage.src = url;
       return;
     }
@@ -226,7 +298,7 @@ export class ScreencastView {
     createImageBitmap(blob).then(bitmap => {
       try {
         if (this.active && this.frameToken === token && this.tabId === targetTabId) {
-          this.drawSource(bitmap, bitmap.width, bitmap.height);
+          this.drawSource(bitmap, bitmap.width, bitmap.height, meta);
         }
       } finally {
         bitmap.close?.();
@@ -247,6 +319,7 @@ export class ScreencastView {
       this.width = frame.width;
       this.height = frame.height;
     }
+    this.pendingImageMeta = frame;
     this.frameImage.src = `data:image/jpeg;base64,${frame.data}`;
   }
 
@@ -255,8 +328,8 @@ export class ScreencastView {
     const availW = this.bounds.clientWidth;
     const availH = this.bounds.clientHeight;
     if (!availW || !availH) return;
-    const aspectW = this.canvas.width || this.width || 1920;
-    const aspectH = this.canvas.height || this.height || 1080;
+    const aspectW = this.coordWidth || this.canvas.width || this.width || 1920;
+    const aspectH = this.coordHeight || this.canvas.height || this.height || 1080;
     const scale = Math.min(availW / aspectW, availH / aspectH);
     this.canvas.style.width = `${Math.floor(aspectW * scale)}px`;
     this.canvas.style.height = `${Math.floor(aspectH * scale)}px`;

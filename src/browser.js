@@ -179,6 +179,7 @@ export class BrowserService extends EventEmitter {
     this.controlQueue = Promise.resolve();
     this.controlBacklog = 0;
     this.queuedWheel = null;
+    this.queuedScreencastMove = null;
   }
 
   async start() {
@@ -321,6 +322,9 @@ export class BrowserService extends EventEmitter {
         this.viewport = next;
         const activeTabs = [...this.tabs.values()].filter(tab => !tab.hidden && !tab.page.isClosed());
         await Promise.all(activeTabs.map(tab => tab.page.setViewportSize(next).catch(() => {})));
+        await Promise.all(activeTabs
+          .filter(tab => this.screencast.hasViewers(tab.id))
+          .map(tab => this.screencast.updateViewport(tab.id, next).catch(() => {})));
         this.emit('change', this.summary());
       }
     } finally {
@@ -365,7 +369,11 @@ export class BrowserService extends EventEmitter {
     attachTabDiagnostics(tab, (kind, entry) => this.emit('devtools', { tabId: tab.id, kind, entry }));
     const currentViewport = page.viewportSize();
     if (this.viewport && (!currentViewport || currentViewport.width !== this.viewport.width || currentViewport.height !== this.viewport.height)) {
-      page.setViewportSize(this.viewport).catch(() => {});
+      page.setViewportSize(this.viewport).catch(() => {}).finally(() => {
+        if (this.screencast.sessions.size > 0) this.screencast.resyncBounds();
+      });
+    } else if (this.screencast.sessions.size > 0) {
+      this.screencast.resyncBounds();
     }
     this.emit('change', this.summary());
     const refresh = () => { tab.loading = false; this.refresh(tab, { refreshFavicon: true }); this.ensureRecorder(tab); this.refreshHistory(tab); };
@@ -524,7 +532,9 @@ export class BrowserService extends EventEmitter {
 
   async enableScreencast(viewerId, tabId) {
     const tab = this.tabs.get(tabId);
-    const ok = await this.screencast.enable(tab, viewerId, this.viewport);
+    const ok = await this.screencast.enable(tab, viewerId, this.viewport, {
+      getBrowserCdp: () => this.lnaCdp,
+    });
     this.syncAllRecorderWatchState();
     return ok;
   }

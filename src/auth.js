@@ -3,7 +3,10 @@ import path from 'node:path';
 import { readJson, writePrivateJson, privateDirectory } from './files.js';
 
 export const SESSION_COOKIE = 'ditto_session';
-export const SESSION_SECONDS = 30 * 24 * 60 * 60;
+// Chrome/RFC 6265bis caps persistent cookie Max-Age at 400 days. Sessions
+// themselves are permanent (expires=0) and sliding-renewed on every /api/state
+// visit so a logged-in browser stays authenticated until explicit logout.
+export const SESSION_SECONDS = 400 * 24 * 60 * 60;
 
 export function constantEqual(left, right) {
   if (typeof left !== 'string' || typeof right !== 'string') return false;
@@ -46,26 +49,35 @@ export class Authentication {
     return createHmac('sha256', this.credentials.sessionKey).update(payload).digest('base64url');
   }
 
-  session(now = Date.now()) {
-    const payload = `${Math.floor(now / 1000) + SESSION_SECONDS}.${randomBytes(12).toString('base64url')}`;
+  session(now = Date.now(), ttlSeconds = 0) {
+    const expires = ttlSeconds > 0 ? Math.floor(now / 1000) + ttlSeconds : 0;
+    const payload = `${expires}.${randomBytes(12).toString('base64url')}`;
     return `${payload}.${this.signature(payload)}`;
   }
 
   validSession(value, now = Date.now()) {
     if (typeof value !== 'string' || value.length > 200) return false;
     const parts = value.split('.');
-    if (parts.length !== 3 || !/^\d+$/.test(parts[0])) return false;
+    if (parts.length !== 3 || !/^\d+$/.test(parts[0]) || !parts[1]) return false;
     const expires = Number(parts[0]);
-    if (expires <= Math.floor(now / 1000) || expires > Math.floor(now / 1000) + SESSION_SECONDS) return false;
+    if (expires !== 0) {
+      const nowSec = Math.floor(now / 1000);
+      if (expires <= nowSec || expires > nowSec + SESSION_SECONDS) return false;
+    }
     return constantEqual(parts[2], this.signature(`${parts[0]}.${parts[1]}`));
+  }
+
+  sessionFromCookie(request) {
+    const cookies = String(request.headers.cookie || '').split(';');
+    const entry = cookies.map(item => item.trim()).find(item => item.startsWith(`${SESSION_COOKIE}=`));
+    const value = entry ? entry.slice(SESSION_COOKIE.length + 1) : '';
+    return value && this.validSession(value) ? value : null;
   }
 
   isDashboard(request) {
     const bearer = request.headers.authorization?.replace(/^Bearer /, '');
     if (constantEqual(bearer, this.credentials.dashboardToken)) return true;
-    const cookies = String(request.headers.cookie || '').split(';');
-    const entry = cookies.map(item => item.trim()).find(item => item.startsWith(`${SESSION_COOKIE}=`));
-    return Boolean(entry && this.validSession(entry.slice(SESSION_COOKIE.length + 1)));
+    return Boolean(this.sessionFromCookie(request));
   }
 
   isSync(request) {

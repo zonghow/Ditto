@@ -84,9 +84,11 @@ test('HTTP interface protects state, pairing, upload and login-state application
   const login = await request('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: credentials.dashboardToken }) });
   assert.equal(login.status, 200);
-  assert.match(login.headers.get('set-cookie'), /HttpOnly; SameSite=Strict/);
-  const state = await request('/api/state', { headers: { Cookie: login.headers.get('set-cookie').split(';')[0] } });
+  const loginCookie = login.headers.get('set-cookie');
+  assert.match(loginCookie, /ditto_session=0\..*; Path=\/api; HttpOnly; SameSite=Strict; Max-Age=34560000/);
+  const state = await request('/api/state', { headers: { Cookie: loginCookie.split(';')[0] } });
   assert.equal(state.status, 200);
+  assert.equal(state.headers.get('set-cookie'), loginCookie);
   assert.equal((await state.json()).browser.ready, true);
   const secret = randomBytes(16).toString('hex');
   const body = { schemaVersion: 1, cookies: [{ name: 'synthetic', value: secret, domain: 'example.com', path: '/', hostOnly: true }],

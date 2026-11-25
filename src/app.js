@@ -137,10 +137,16 @@ export function createApplication({ config, credentials, browser, sync, logger, 
     response.set('Set-Cookie', authentication.cookie('', true));
     response.json({ ok: true });
   });
-  app.get('/api/state', requireDashboard, (request, response) => response.json({
-    browser: browser.summary(), sync: sync.summary(), cookieSync: cookieRequests.summary(sync.summary()),
-    authRequired, extensionConnected: wsHub.hasConnectedExtension(), version: '0.3.0',
-  }));
+  app.get('/api/state', requireDashboard, (request, response) => {
+    if (authRequired) {
+      const existing = authentication.sessionFromCookie(request);
+      if (existing) response.set('Set-Cookie', authentication.cookie(existing));
+    }
+    response.json({
+      browser: browser.summary(), sync: sync.summary(), cookieSync: cookieRequests.summary(sync.summary()),
+      authRequired, extensionConnected: wsHub.hasConnectedExtension(), version: '0.3.0',
+    });
+  });
   app.get('/api/memory', requireDashboard, async (request, response) => {
     const force = request.query.force === '1';
     response.json(await getMemoryMetrics({ force }));

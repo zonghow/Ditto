@@ -6,13 +6,20 @@ import { Authentication, SESSION_SECONDS, allowedOrigin, constantEqual, validHos
 const credentials = { dashboardToken: randomBytes(32).toString('hex'), syncToken: randomBytes(32).toString('hex'),
   sessionKey: randomBytes(32).toString('hex') };
 const auth = new Authentication(credentials);
-test('signed sessions expire and cannot be forged', () => {
+test('permanent and timed signed sessions validate strictly and cannot be forged', () => {
   const now = 1000000000000;
-  const session = auth.session(now);
-  assert.equal(auth.validSession(session, now), true);
-  assert.equal(auth.validSession(`${session}x`, now), false);
-  assert.equal(auth.validSession(session, now + SESSION_SECONDS * 1000), false);
-  assert.equal(auth.validSession(session.replace(/^\d+/, '999999999999'), now), false);
+  const permanent = auth.session(now);
+  assert.equal(permanent.startsWith('0.'), true);
+  assert.equal(auth.validSession(permanent, now), true);
+  assert.equal(auth.validSession(permanent, now + 10 * 365 * 24 * 3600 * 1000), true);
+  assert.equal(auth.validSession(`${permanent}x`, now), false);
+  assert.equal(auth.validSession(permanent.replace(/^0/, '999999999999'), now), false);
+
+  const timed = auth.session(now, 3600);
+  assert.equal(auth.validSession(timed, now), true);
+  assert.equal(auth.validSession(timed, now + 3600 * 1000), false);
+  assert.equal(auth.validSession(timed.replace(/^\d+/, '0'), now), false);
+  assert.equal(SESSION_SECONDS, 400 * 24 * 60 * 60);
 });
 test('sync and dashboard credentials have distinct permissions', () => {
   const request = token => ({ headers: { authorization: `Bearer ${token}` } });

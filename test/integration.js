@@ -274,6 +274,23 @@ try {
       const surface = document.querySelector('#control-surface');
       return btn && getComputedStyle(btn).backgroundColor === 'rgb(30, 64, 175)' && surface?.style.cursor === 'pointer';
     }, { timeout: 2500 });
+    // Hovering and clicking a recorded <canvas> chart forwards pointer events to remote Chromium (enabling tooltips/crosshairs)
+    await freshPage.evaluate(() => {
+      const tip = document.createElement('div');
+      tip.id = 'chart-tooltip';
+      tip.textContent = 'idle';
+      document.body.append(tip);
+      const c = document.querySelector('#chart');
+      c.addEventListener('mousemove', () => { tip.textContent = 'chart-hovered'; });
+      c.addEventListener('click', () => { tip.textContent = 'chart-clicked'; });
+    });
+    await replay().locator('#chart-tooltip').waitFor();
+    const chartBox = await replay().locator('#chart').boundingBox();
+    assert.ok(chartBox, 'Missing replay box for #chart');
+    await observer.mouse.move(chartBox.x + chartBox.width / 2, chartBox.y + chartBox.height / 2);
+    await replay().locator('#chart-tooltip').filter({ hasText: 'chart-hovered' }).waitFor({ timeout: 3000 });
+    await observer.mouse.click(chartBox.x + chartBox.width / 2, chartBox.y + chartBox.height / 2);
+    await replay().locator('#chart-tooltip').filter({ hasText: 'chart-clicked' }).waitFor({ timeout: 3000 });
     const clickReplay = async selector => {
       const box = await replay().locator(selector).boundingBox();
       assert.ok(box, `Missing replay box for ${selector}`);

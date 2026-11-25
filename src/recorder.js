@@ -221,6 +221,15 @@ function bootstrap(bindingName, instanceId, port) {
     clearTimeout(videoEventTimer);
     videoEventTimer = setTimeout(() => { if (state.watched && state.recording) captureVideos(false); }, 60);
   };
+  let canvasInteractTimer = null;
+  const onCanvasInteract = event => {
+    if (!state.recording || !state.watched || event.target?.tagName !== 'CANVAS') return;
+    if (canvasInteractTimer) return;
+    canvasInteractTimer = setTimeout(() => {
+      canvasInteractTimer = null;
+      if (state.watched && state.recording) captureCanvases(false);
+    }, 80);
+  };
   const baseOptions = {
     emit: event => {
       send({ type: 'event', event });
@@ -279,9 +288,12 @@ function bootstrap(bindingName, instanceId, port) {
       canvasPollTimer = null;
       clearTimeout(canvasSnapshotTimer);
       clearTimeout(videoEventTimer);
+      clearTimeout(canvasInteractTimer);
+      canvasInteractTimer = null;
       stopRecordInner();
     }
   };
+  state.isRecordedCanvas = node => Boolean(node && lastCanvasFrames.has(node));
   state.checkpoint = () => {
     if (!state.active) return;
     // If a document initialized during login import, its first start was
@@ -312,7 +324,9 @@ function bootstrap(bindingName, instanceId, port) {
   };
   const onShow = event => { if (event.persisted) state.checkpoint(); };
   const videoEvents = ['loadeddata', 'seeked', 'play', 'pause'];
+  const canvasEvents = ['pointermove', 'pointerout', 'click'];
   for (const name of videoEvents) document.addEventListener(name, onVideoEvent, true);
+  for (const name of canvasEvents) document.addEventListener(name, onCanvasInteract, { capture: true, passive: true });
   document.addEventListener('focusin', onFocus, true);
   window.addEventListener('pageshow', onShow);
   state.stop = () => {
@@ -320,10 +334,13 @@ function bootstrap(bindingName, instanceId, port) {
     canvasPollTimer = null;
     clearTimeout(canvasSnapshotTimer);
     clearTimeout(videoEventTimer);
+    clearTimeout(canvasInteractTimer);
+    canvasInteractTimer = null;
     stopRecordInner();
     state.active = false;
     state.watched = false;
     for (const name of videoEvents) document.removeEventListener(name, onVideoEvent, true);
+    for (const name of canvasEvents) document.removeEventListener(name, onCanvasInteract, true);
     document.removeEventListener('focusin', onFocus, true);
     window.removeEventListener('pageshow', onShow);
   };

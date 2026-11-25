@@ -112,7 +112,7 @@ export async function dispatchControl(browser, id, _revision, command) {
         const node = rec.resolveNode(nodeId);
         if (!node || !node.isConnected || node.nodeType !== 1) return { err: '目标节点已经变化，请等待回放更新。' };
         if (node.ownerDocument !== document) return { err: '目标 frame 与回放不一致。' };
-        if (node.tagName === 'CANVAS' || node.tagName === 'IFRAME' || node.closest('[data-ditto-private]')) {
+        if (node.tagName === 'IFRAME' || (node.tagName === 'CANVAS' && !rec.isRecordedCanvas?.(node)) || node.closest('[data-ditto-private]')) {
           return { err: '未录制的 Canvas/frame 或私有遮罩区域不支持回放操作。' };
         }
         const rect = node.getBoundingClientRect();
@@ -173,7 +173,11 @@ export async function dispatchControl(browser, id, _revision, command) {
     handle = await tab.page.evaluateHandle(({ key, id }) => window[key]?.resolveNode(id), { key: RECORDER_KEY, id: command.nodeId });
     let element = handle.asElement();
     if (!element || !await element.evaluate(node => node.isConnected)) throw new InputError('目标节点已经变化，请等待回放更新。', 409);
-    if (await element.evaluate(node => ['CANVAS', 'IFRAME'].includes(node.tagName) || node.closest('[data-ditto-private]'))) throw new InputError('未录制的 Canvas/frame 或私有遮罩区域不支持回放操作。', 409);
+    if (await element.evaluate((node, key) => node.tagName === 'IFRAME'
+      || (node.tagName === 'CANVAS' && !window.top?.[key]?.isRecordedCanvas?.(node))
+      || Boolean(node.closest('[data-ditto-private]')), RECORDER_KEY)) {
+      throw new InputError('未录制的 Canvas/frame 或私有遮罩区域不支持回放操作。', 409);
+    }
     let frame = tab.page.mainFrame();
     for (const frameId of command.framePath) {
       const frameHandle = await tab.page.evaluateHandle(({ key, id }) => window[key]?.resolveNode(id), { key: RECORDER_KEY, id: frameId });

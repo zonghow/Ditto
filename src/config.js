@@ -65,6 +65,28 @@ function normalizeToken(value) {
   return trimmed;
 }
 
+const VALID_SCREENCAST_QUALITIES = new Set(['smooth', 'balanced', 'high', 'lossless']);
+
+function screencastQuality(envRaw, fileVal) {
+  const raw = envRaw !== undefined ? envRaw : fileVal;
+  if (raw === undefined || raw === null || raw === '') return 'balanced';
+  const normalized = String(raw).trim().toLowerCase();
+  if (!VALID_SCREENCAST_QUALITIES.has(normalized)) {
+    throw new Error('Invalid screencastQuality; use smooth, balanced, high, or lossless.');
+  }
+  return normalized;
+}
+
+function deviceScaleFactor(envRaw, fileVal) {
+  const raw = envRaw !== undefined ? envRaw : fileVal;
+  if (raw === undefined || raw === null || raw === '') return 2;
+  const parsed = Number(raw);
+  if (parsed !== 1 && parsed !== 2) {
+    throw new Error('Invalid deviceScaleFactor; use 1 or 2.');
+  }
+  return parsed;
+}
+
 function loadConfigFile(filePath) {
   if (!filePath) return { data: {}, loaded: false };
   try {
@@ -143,6 +165,9 @@ export function configuration(overrides = {}) {
     syncUpstream: envValue('DITTO_SYNC_UPSTREAM') || undefined,
     demo: parseBool(envValue('DITTO_DEMO'), file.demo, true),
     viewport: viewport(envValue('DITTO_VIEWPORT') ?? file.viewport),
+    deviceScaleFactor: deviceScaleFactor(envValue('DITTO_DEVICE_SCALE_FACTOR'), file.deviceScaleFactor),
+    screencastQuality: screencastQuality(envValue('DITTO_SCREENCAST_QUALITY'), file.screencastQuality),
+    screencastRetina: parseBool(envValue('DITTO_SCREENCAST_RETINA'), file.screencastRetina, false),
     publicDir: path.join(projectRoot, 'public'),
     ...overrides,
     // Keep normalized/derived fields consistent when overrides passed dataDir/token.

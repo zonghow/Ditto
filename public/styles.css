@@ -442,6 +442,10 @@ button:disabled, input:disabled { opacity: .4; cursor: not-allowed; }
 .drawer-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
+.drawer-subrow {
+  padding-left: 10px;
+}
+.drawer-subrow .drawer-label { font-size: .78rem; color: var(--muted); }
 .drawer-label { font-size: .82rem; color: var(--text-soft); font-weight: 500; }
 .drawer-footer {
   padding: 10px 14px;
@@ -607,6 +611,7 @@ button:disabled, input:disabled { opacity: .4; cursor: not-allowed; }
   color: var(--text-strong);
   box-shadow: var(--theme-active-shadow);
 }
+.seg-compact .seg-option { padding: 0 8px; font-size: .74rem; }
 .theme-option {
   width: 28px; height: 26px; padding: 0;
 }

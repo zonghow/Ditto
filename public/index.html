@@ -230,6 +230,22 @@
             <span class="toggle-track" aria-hidden="true"></span>
           </label>
         </div>
+        <div id="screencast-quality-row" class="drawer-row drawer-subrow" hidden>
+          <span class="drawer-label">清晰度</span>
+          <div id="screencast-quality-switcher" class="segmented seg-compact" role="group" aria-label="画面直连清晰度">
+            <button type="button" class="seg-option" data-sc-quality="smooth" aria-pressed="false">流畅</button>
+            <button type="button" class="seg-option active" data-sc-quality="balanced" aria-pressed="true">均衡</button>
+            <button type="button" class="seg-option" data-sc-quality="high" aria-pressed="false">高清</button>
+            <button type="button" class="seg-option" data-sc-quality="lossless" aria-pressed="false">无损</button>
+          </div>
+        </div>
+        <div id="screencast-retina-row" class="drawer-row drawer-subrow" hidden>
+          <span class="drawer-label" title="以 2x 高分屏像素密度推流，适合 Mac Retina 屏幕阅读文字">Retina 2x</span>
+          <label class="toggle-switch drawer-switch" title="开启或关闭 2x 高分屏推流">
+            <input id="screencast-retina-toggle" type="checkbox" role="switch" aria-label="开启 Retina 2x 高分屏推流">
+            <span class="toggle-track" aria-hidden="true"></span>
+          </label>
+        </div>
       </section>
 
       <section id="agent-sessions-section" class="drawer-section" hidden>

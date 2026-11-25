@@ -273,8 +273,9 @@ export class ScreencastView {
       this.width = meta.width;
       this.height = meta.height;
     }
+    const mime = meta.format === 'png' ? 'image/png' : 'image/jpeg';
     if (typeof createImageBitmap !== 'function') {
-      const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+      const blob = new Blob([jpegBytes], { type: mime });
       const url = URL.createObjectURL(blob);
       if (this.lastObjectUrl) URL.revokeObjectURL(this.lastObjectUrl);
       this.lastObjectUrl = url;
@@ -294,7 +295,8 @@ export class ScreencastView {
     this.decoding = true;
     const token = this.frameToken;
     const targetTabId = meta.tabId;
-    const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+    const mime = meta.format === 'png' ? 'image/png' : 'image/jpeg';
+    const blob = new Blob([jpegBytes], { type: mime });
     createImageBitmap(blob).then(bitmap => {
       try {
         if (this.active && this.frameToken === token && this.tabId === targetTabId) {
@@ -320,7 +322,8 @@ export class ScreencastView {
       this.height = frame.height;
     }
     this.pendingImageMeta = frame;
-    this.frameImage.src = `data:image/jpeg;base64,${frame.data}`;
+    const mime = frame.format === 'png' ? 'image/png' : 'image/jpeg';
+    this.frameImage.src = `data:${mime};base64,${frame.data}`;
   }
 
   fit() {

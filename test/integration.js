@@ -695,12 +695,16 @@ try {
     await observer.locator('#drawer-toggle').click();
     await observer.locator('#control-drawer.open').waitFor({ state: 'visible' });
     await observer.locator('label.drawer-switch:has(#screencast-toggle)').click();
+    await observer.locator('#screencast-quality-row').waitFor({ state: 'visible' });
+    await observer.locator('#screencast-retina-row').waitFor({ state: 'visible' });
+    await observer.locator('#screencast-quality-switcher [data-sc-quality="lossless"]').click();
+    await observer.locator('label.drawer-switch:has(#screencast-retina-toggle)').click();
     await observer.locator('#drawer-close').click();
     await observer.locator('#screencast-stage').waitFor({ state: 'visible' });
     await observedTab.page.evaluate(() => { document.body.style.opacity = '0.99'; });
     await observer.waitForFunction(() => {
       const c = document.getElementById('screencast-canvas');
-      if (!c || c.width < 100 || c.height < 100) return false;
+      if (!c || c.width < 1500 || c.height < 800) return false;
       const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
       for (let i = 0; i < d.length; i += 4) {
         if (d[i + 1] > 210 && d[i] < 60 && d[i + 2] < 60) return true;
@@ -723,10 +727,14 @@ try {
       return {
         clientX: rect.left + (cx / c.width) * rect.width,
         clientY: rect.top + (cy / c.height) * rect.height,
+        canvasW: c.width,
+        cssW: rect.width,
         n,
       };
     });
     assert.ok(scTarget.n > 10, `Expected green marker pixels on screencast canvas, got ${scTarget.n}`);
+    assert.ok(scTarget.canvasW > scTarget.cssW * 1.4,
+      `Expected Retina 2x backing canvas (${scTarget.canvasW}) to exceed CSS width (${Math.round(scTarget.cssW)})`);
     await observer.mouse.click(scTarget.clientX, scTarget.clientY);
     await observedTab.page.waitForFunction(() => Boolean(window.__scHit), { timeout: 4000 });
     const scHit = await observedTab.page.evaluate(() => window.__scHit);
@@ -735,9 +743,10 @@ try {
     await observer.locator('#drawer-toggle').click();
     await observer.locator('#control-drawer.open').waitFor({ state: 'visible' });
     await observer.locator('label.drawer-switch:has(#screencast-toggle)').click();
+    await observer.locator('#screencast-quality-row').waitFor({ state: 'hidden' });
     await observer.locator('#drawer-close').click();
     await observer.locator('#screencast-stage').waitFor({ state: 'hidden' });
-    checks.push('screencast mouse clicks hit exact remote CSS coordinates without drift');
+    checks.push('screencast supports lossless PNG + Retina 2x live switching and hits exact remote CSS coordinates without drift');
     assert.deepEqual(pageErrors, []);
     await observer.setViewportSize({ width: 390, height: 844 });
     const overflow = await observer.evaluate(() => ({

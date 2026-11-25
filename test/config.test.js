@@ -130,3 +130,22 @@ test('config.json validates object viewport and rejects malformed JSON or contro
   await writeFile(path.join(dataDir, 'config.json'), '{not-valid-json');
   assert.throws(() => configuration({ dataDir }), /Invalid JSON in config file/);
 });
+
+test('config.json and env configure screencastQuality, screencastRetina, and deviceScaleFactor', async () => {
+  const dataDir = await mkdtemp(path.join(process.env.DITTO_TEST_TEMP || os.tmpdir(), 'ditto-cfg-sc-'));
+  await writeFile(path.join(dataDir, 'config.json'), JSON.stringify({
+    screencastQuality: 'high',
+    screencastRetina: true,
+    deviceScaleFactor: 1,
+  }));
+  const cfg = configuration({ dataDir });
+  assert.equal(cfg.screencastQuality, 'high');
+  assert.equal(cfg.screencastRetina, true);
+  assert.equal(cfg.deviceScaleFactor, 1);
+
+  await writeFile(path.join(dataDir, 'config.json'), JSON.stringify({ screencastQuality: 'ultra' }));
+  assert.throws(() => configuration({ dataDir }), /screencastQuality/);
+
+  await writeFile(path.join(dataDir, 'config.json'), JSON.stringify({ deviceScaleFactor: 3 }));
+  assert.throws(() => configuration({ dataDir }), /deviceScaleFactor/);
+});

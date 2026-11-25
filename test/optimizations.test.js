@@ -853,3 +853,56 @@ test('BrowserService.refresh guards re-entrancy, avoids per-tick favicon/origin 
   browser.setViewer('v2', 't-opt', false, 'browser');
   assert.equal(browser.isTabWatched('t-opt'), true);
 });
+
+test('ScreencastManager switches quality presets (smooth/high/lossless PNG) and Retina 2x live', async () => {
+  const manager = new ScreencastManager({ defaultQuality: 'balanced', defaultRetina: false });
+  const cdpEvents = new EventEmitter();
+  const starts = [];
+  let stops = 0;
+  const cdp = {
+    on: (ev, fn) => cdpEvents.on(ev, fn),
+    off: (ev, fn) => cdpEvents.off(ev, fn),
+    send: async (method, params) => {
+      if (method === 'Page.startScreencast') starts.push(params);
+      if (method === 'Page.stopScreencast') stops++;
+    },
+  };
+  const tab = {
+    id: 'sc-qual-tab',
+    hidden: false,
+    crashed: false,
+    cdp,
+    page: {
+      isClosed: () => false,
+      viewportSize: () => ({ width: 1400, height: 850 }),
+      bringToFront: async () => {},
+    },
+  };
+  const frames = [];
+  manager.on('frame', f => frames.push(f));
+
+  // Initial default balanced 1x
+  await manager.enable(tab, 'v1', { width: 1400, height: 850 });
+  assert.deepEqual(starts.at(-1), { format: 'jpeg', quality: 80, maxWidth: 1400, maxHeight: 850, everyNthFrame: 1 });
+
+  // Live switch to lossless PNG + Retina 2x on same viewer/tab
+  await manager.enable(tab, 'v1', { width: 1400, height: 850 }, { quality: 'lossless', retina: true });
+  assert.equal(stops, 1);
+  assert.deepEqual(starts.at(-1), { format: 'png', maxWidth: 2800, maxHeight: 1700, everyNthFrame: 1 });
+
+  // Emitted frame carries format='png' and binary encoder includes format='png'
+  const fakePng = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64');
+  cdpEvents.emit('Page.screencastFrame', { sessionId: 1, data: fakePng, metadata: { deviceWidth: 1400, deviceHeight: 850 } });
+  assert.equal(frames.at(-1).format, 'png');
+  const pkt = encodeBinaryScreencastFrame(frames.at(-1));
+  const hdrLen = pkt.readUInt32BE(0);
+  const hdr = JSON.parse(pkt.subarray(4, 4 + hdrLen).toString('utf8'));
+  assert.equal(hdr.format, 'png');
+
+  // Second viewer joins with smooth 1x -> keeps highest active (lossless 2x) until v1 leaves
+  await manager.enable(tab, 'v2', { width: 1400, height: 850 }, { quality: 'smooth', retina: false });
+  assert.equal(starts.length, 2);
+  await manager.disable('sc-qual-tab', 'v1');
+  assert.deepEqual(starts.at(-1), { format: 'jpeg', quality: 60, maxWidth: 1400, maxHeight: 850, everyNthFrame: 1 });
+  await manager.disable('sc-qual-tab', 'v2');
+});

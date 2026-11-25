@@ -9,6 +9,23 @@ const ALLOWED_KEYS = new Set([
 const ALLOWED_MODIFIERS = new Set(['Control', 'Meta', 'Alt', 'Shift']);
 const ALLOWED_ACTIONS = new Set(['mousedown', 'mousemove', 'mouseup', 'click', 'wheel', 'key', 'text']);
 
+export const SCREENCAST_PRESETS = {
+  smooth: { format: 'jpeg', quality: 60 },
+  balanced: { format: 'jpeg', quality: 80 },
+  high: { format: 'jpeg', quality: 92 },
+  lossless: { format: 'png' },
+};
+
+const QUALITY_RANK = { smooth: 0, balanced: 1, high: 2, lossless: 3 };
+
+export function normalizeScreencastQuality(value, fallback = 'balanced') {
+  if (typeof value === 'string') {
+    const key = value.trim().toLowerCase();
+    if (Object.hasOwn(SCREENCAST_PRESETS, key)) return key;
+  }
+  return Object.hasOwn(SCREENCAST_PRESETS, fallback) ? fallback : 'balanced';
+}
+
 export function computeScreencastFrameGeometry(frame, fallbackViewport) {
   const vpW = Math.max(1, Number(frame?.viewportWidth || fallbackViewport?.width) || 1280);
   const vpH = Math.max(1, Number(frame?.viewportHeight || fallbackViewport?.height) || 800);
@@ -97,12 +114,14 @@ export function validateScreencastInput(input) {
 }
 
 export class ScreencastManager extends EventEmitter {
-  sessions = new Map(); // tabId -> { tab, viewers: Set<string>, cdp, handler, lastFrame, syncedBoundsKey, syncingBounds, getBrowserCdp, fallbackVp, activeUntil, ackTimer, pendingAckSessionId, dedupedFrames }
+  sessions = new Map(); // tabId -> { tab, viewers: Set<string>, viewerPrefs: Map<string, { quality, retina }>, cdp, handler, lastFrame, syncedBoundsKey, syncingBounds, getBrowserCdp, fallbackVp, activeUntil, ackTimer, pendingAckSessionId, dedupedFrames, quality, retina }
 
-  constructor({ activeWindowMs = 1500, idleAckDelayMs = 180 } = {}) {
+  constructor({ activeWindowMs = 1500, idleAckDelayMs = 180, defaultQuality = 'balanced', defaultRetina = false } = {}) {
     super();
     this.activeWindowMs = activeWindowMs;
     this.idleAckDelayMs = idleAckDelayMs;
+    this.defaultQuality = normalizeScreencastQuality(defaultQuality, 'balanced');
+    this.defaultRetina = Boolean(defaultRetina);
   }
 
   hasViewers(tabId) {
@@ -170,14 +189,51 @@ export class ScreencastManager extends EventEmitter {
     this.flushPendingAck(session);
   }
 
-  startParams(vp) {
-    return {
-      format: 'jpeg',
-      quality: 75,
-      maxWidth: Math.min(2560, Math.max(640, vp.width)),
-      maxHeight: Math.min(1440, Math.max(360, vp.height)),
+  effectivePrefs(session) {
+    let quality = this.defaultQuality;
+    let retina = this.defaultRetina;
+    if (session?.viewerPrefs?.size) {
+      let bestRank = -1;
+      let anyRetina = false;
+      for (const pref of session.viewerPrefs.values()) {
+        const rank = QUALITY_RANK[pref.quality] ?? 1;
+        if (rank > bestRank) { bestRank = rank; quality = pref.quality; }
+        if (pref.retina) anyRetina = true;
+      }
+      retina = anyRetina;
+    }
+    return { quality, retina };
+  }
+
+  startParams(vp, { quality = this.defaultQuality, retina = this.defaultRetina } = {}) {
+    const preset = SCREENCAST_PRESETS[normalizeScreencastQuality(quality, this.defaultQuality)];
+    const scale = retina ? 2 : 1;
+    const maxWCap = retina ? 3840 : 2560;
+    const maxHCap = retina ? 2160 : 1440;
+    const params = {
+      format: preset.format,
+      maxWidth: Math.min(maxWCap, Math.max(640, Math.round(vp.width * scale))),
+      maxHeight: Math.min(maxHCap, Math.max(360, Math.round(vp.height * scale))),
       everyNthFrame: 1,
     };
+    if (preset.format === 'jpeg') params.quality = preset.quality;
+    return params;
+  }
+
+  async restartSession(tabId, session, viewport) {
+    if (!session || session.tab?.page?.isClosed?.()) return;
+    const vp = viewport || session.tab.page.viewportSize() || session.fallbackVp || { width: 1280, height: 800 };
+    const { quality, retina } = this.effectivePrefs(session);
+    session.quality = quality;
+    session.retina = retina;
+    session.lastFrame = null;
+    session.activeUntil = Date.now() + this.activeWindowMs;
+    this.clearPendingAck(session);
+    try {
+      await session.cdp.send('Page.stopScreencast').catch(() => {});
+      if (this.sessions.get(tabId) !== session) return;
+      await session.cdp.send('Page.startScreencast', this.startParams(vp, { quality, retina }));
+    } catch { /* ignore transient restart errors */ }
   }
 
   async syncWindowBounds(session, vp, metadata) {
@@ -215,10 +271,14 @@ export class ScreencastManager extends EventEmitter {
     }
   }
 
-  async enable(tab, viewerId, viewport, { getBrowserCdp } = {}) {
+  async enable(tab, viewerId, viewport, { getBrowserCdp, quality, retina } = {}) {
     if (!tab || tab.hidden || tab.page.isClosed() || tab.crashed) {
       throw new InputError('该标签页当前不可使用画面直连模式。', 409);
     }
+    const viewerPref = {
+      quality: quality !== undefined ? normalizeScreencastQuality(quality, this.defaultQuality) : this.defaultQuality,
+      retina: retina !== undefined ? Boolean(retina) : this.defaultRetina,
+    };
     // Remove this viewer from any other tab's screencast first.
     for (const [otherId, session] of this.sessions) {
       if (otherId !== tab.id && session.viewers.has(viewerId)) {
@@ -228,8 +288,12 @@ export class ScreencastManager extends EventEmitter {
     let session = this.sessions.get(tab.id);
     if (session) {
       session.viewers.add(viewerId);
+      session.viewerPrefs.set(viewerId, viewerPref);
+      const nextPrefs = this.effectivePrefs(session);
       this.noteActivity(tab.id);
-      if (session.lastFrame) {
+      if (nextPrefs.quality !== session.quality || nextPrefs.retina !== session.retina) {
+        await this.restartSession(tab.id, session);
+      } else if (session.lastFrame) {
         this.emit('frame', { ...session.lastFrame, targetViewerId: viewerId });
       }
       return true;
@@ -241,9 +305,11 @@ export class ScreencastManager extends EventEmitter {
     const cdp = tab.cdp;
     const fallbackVp = viewport || { width: 1280, height: 800 };
     const vp = tab.page.viewportSize() || fallbackVp;
+    const viewerPrefs = new Map([[viewerId, viewerPref]]);
     session = {
       tab,
       viewers: new Set([viewerId]),
+      viewerPrefs,
       cdp,
       handler: null,
       lastFrame: null,
@@ -255,6 +321,8 @@ export class ScreencastManager extends EventEmitter {
       ackTimer: null,
       pendingAckSessionId: null,
       dedupedFrames: 0,
+      quality: viewerPref.quality,
+      retina: viewerPref.retina,
     };
     const handler = params => {
       this.scheduleAck(session, params.sessionId);
@@ -262,6 +330,7 @@ export class ScreencastManager extends EventEmitter {
       const rawOffsetTop = Number(params.metadata?.offsetTop);
       const rawScale = Number(params.metadata?.pageScaleFactor);
       const rawBuffer = Buffer.from(params.data, 'base64');
+      const format = SCREENCAST_PRESETS[session.quality]?.format || 'jpeg';
       const width = params.metadata?.deviceWidth || curVp.width;
       const height = params.metadata?.deviceHeight || curVp.height;
       const offsetTop = Number.isFinite(rawOffsetTop) && rawOffsetTop > 0 ? rawOffsetTop : 0;
@@ -269,6 +338,7 @@ export class ScreencastManager extends EventEmitter {
       const prev = session.lastFrame;
       const unchanged = Boolean(
         prev
+        && prev.format === format
         && prev.rawBuffer.length === rawBuffer.length
         && prev.width === width
         && prev.height === height
@@ -286,6 +356,7 @@ export class ScreencastManager extends EventEmitter {
       const frame = {
         type: 'screencast-frame',
         tabId: tab.id,
+        format,
         data: params.data,
         rawBuffer,
         width,
@@ -304,7 +375,7 @@ export class ScreencastManager extends EventEmitter {
     this.sessions.set(tab.id, session);
     cdp.on('Page.screencastFrame', handler);
     try {
-      await cdp.send('Page.startScreencast', this.startParams(vp));
+      await cdp.send('Page.startScreencast', this.startParams(vp, { quality: session.quality, retina: session.retina }));
     } catch {
       this.clearPendingAck(session);
       cdp.off('Page.screencastFrame', handler);
@@ -319,15 +390,7 @@ export class ScreencastManager extends EventEmitter {
     if (!session || !viewport?.width || !viewport?.height) return;
     session.fallbackVp = viewport;
     session.syncedBoundsKey = null;
-    session.lastFrame = null;
-    session.activeUntil = Date.now() + this.activeWindowMs;
-    this.clearPendingAck(session);
-    if (session.tab?.page?.isClosed?.()) return;
-    try {
-      await session.cdp.send('Page.stopScreencast').catch(() => {});
-      if (this.sessions.get(tabId) !== session) return;
-      await session.cdp.send('Page.startScreencast', this.startParams(viewport));
-    } catch { /* ignore transient resize errors */ }
+    await this.restartSession(tabId, session, viewport);
   }
 
   resyncBounds() {
@@ -347,7 +410,14 @@ export class ScreencastManager extends EventEmitter {
     const session = this.sessions.get(tabId);
     if (!session) return;
     session.viewers.delete(viewerId);
-    if (session.viewers.size > 0) return;
+    session.viewerPrefs?.delete(viewerId);
+    if (session.viewers.size > 0) {
+      const nextPrefs = this.effectivePrefs(session);
+      if (nextPrefs.quality !== session.quality || nextPrefs.retina !== session.retina) {
+        await this.restartSession(tabId, session);
+      }
+      return;
+    }
     this.clearPendingAck(session);
     this.sessions.delete(tabId);
     session.cdp.off('Page.screencastFrame', session.handler);

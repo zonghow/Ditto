@@ -23,6 +23,7 @@ export function encodeBinaryScreencastFrame(frame) {
   if (Number.isFinite(frame.pageScaleFactor) && frame.pageScaleFactor > 0 && frame.pageScaleFactor !== 1) {
     header.pageScaleFactor = frame.pageScaleFactor;
   }
+  if (frame.format === 'png') header.format = 'png';
   const headerJson = JSON.stringify(header);
   const headerBuf = Buffer.from(headerJson, 'utf8');
   const jpegBuf = Buffer.isBuffer(frame.rawBuffer)
@@ -414,7 +415,10 @@ export function createWsHub({
             if (typeof data.tabId !== 'string' || !data.tabId || data.tabId.length > 100) throw new InputError('缺少标签页 ID。');
             ws.screencastTabId = data.tabId;
             try {
-              await browser.enableScreencast?.(id, data.tabId);
+              await browser.enableScreencast?.(id, data.tabId, {
+                quality: data.quality,
+                retina: data.retina,
+              });
             } catch (error) {
               if (ws.screencastTabId === data.tabId) ws.screencastTabId = null;
               throw error;

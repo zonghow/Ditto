@@ -34,6 +34,11 @@ let viewMode = 'browser';
 let viewportMode = 'adaptive';
 let screencastMode = false;
 let screencastTabId = null;
+let screencastQuality = 'balanced';
+let screencastRetina = false;
+let screencastQualityOverride = false;
+let screencastRetinaOverride = false;
+let screencastRetinaCapable = true;
 let drawerOpen = false;
 let operationTimer;
 const pendingControls = new Map();
@@ -390,7 +395,13 @@ function syncScreencast(forceSend = false) {
     $('#empty-frame').hidden = true;
     screencastView.show(screencastTabId);
     if ((changed || forceSend) && socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'screencast', enabled: true, tabId: screencastTabId }));
+      socket.send(JSON.stringify({
+        type: 'screencast',
+        enabled: true,
+        tabId: screencastTabId,
+        quality: screencastQuality,
+        retina: screencastRetina && screencastRetinaCapable,
+      }));
     }
   } else {
     screencastView.hide();
@@ -403,6 +414,40 @@ function syncScreencast(forceSend = false) {
   updateControl();
 }
 
+function updateScreencastSubrows() {
+  if ($('#screencast-quality-row')) $('#screencast-quality-row').hidden = !screencastMode;
+  if ($('#screencast-retina-row')) $('#screencast-retina-row').hidden = !screencastMode || !screencastRetinaCapable;
+}
+
+function applyScreencastQuality(quality, persist = false) {
+  const valid = ['smooth', 'balanced', 'high', 'lossless'];
+  screencastQuality = valid.includes(quality) ? quality : 'balanced';
+  for (const button of document.querySelectorAll('#screencast-quality-switcher .seg-option')) {
+    const active = button.dataset.scQuality === screencastQuality;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+  if (persist) {
+    screencastQualityOverride = true;
+    try { localStorage.setItem('ditto_screencast_quality', screencastQuality); } catch { /* ignore */ }
+  }
+  if (authenticated && screencastTabId) syncScreencast(true);
+}
+
+function applyScreencastRetina(enabled, persist = false) {
+  screencastRetina = Boolean(enabled);
+  const toggle = $('#screencast-retina-toggle');
+  if (toggle) {
+    toggle.checked = screencastRetina;
+    toggle.setAttribute('aria-checked', String(screencastRetina));
+  }
+  if (persist) {
+    screencastRetinaOverride = true;
+    try { localStorage.setItem('ditto_screencast_retina', screencastRetina ? '1' : '0'); } catch { /* ignore */ }
+  }
+  if (authenticated && screencastTabId) syncScreencast(true);
+}
+
 function applyScreencastMode(enabled, persist = false) {
   screencastMode = Boolean(enabled);
   const toggle = $('#screencast-toggle');
@@ -410,6 +455,7 @@ function applyScreencastMode(enabled, persist = false) {
     toggle.checked = screencastMode;
     toggle.setAttribute('aria-checked', String(screencastMode));
   }
+  updateScreencastSubrows();
   if (persist) {
     try { localStorage.setItem('ditto_screencast_mode', screencastMode ? '1' : '0'); } catch { /* ignore */ }
   }
@@ -958,6 +1004,13 @@ function followAgentIfNeeded(next) {
 function updateState(next) {
   state = next;
   extensionBadge(next.extensionConnected);
+  const scCfg = next.browser.screencast;
+  if (scCfg) {
+    screencastRetinaCapable = scCfg.retinaCapable !== false;
+    if (!screencastQualityOverride && scCfg.quality) applyScreencastQuality(scCfg.quality);
+    if (!screencastRetinaOverride && scCfg.retina !== undefined) applyScreencastRetina(scCfg.retina);
+    updateScreencastSubrows();
+  }
   const rawTabs = next.browser.tabs;
   const rawIds = new Set(rawTabs.map(tab => tab.id));
   for (const id of pendingNavSeq.keys()) if (!rawIds.has(id) && !optimisticNewTabs.has(id)) { pendingNavSeq.delete(id); pendingNavUrl.delete(id); }
@@ -1303,6 +1356,39 @@ if ($('#screencast-toggle')) {
     }
     applyScreencastMode(enabled, true);
     operation(enabled ? '已全局开启画面直连模式' : '已切换回轻量 DOM 回放模式');
+  });
+}
+if ($('#screencast-quality-switcher')) {
+  let savedQuality = null;
+  try { savedQuality = localStorage.getItem('ditto_screencast_quality'); } catch { /* ignore */ }
+  if (savedQuality) {
+    screencastQualityOverride = true;
+    applyScreencastQuality(savedQuality);
+  } else {
+    applyScreencastQuality(screencastQuality);
+  }
+  const labels = { smooth: '流畅', balanced: '均衡', high: '高清', lossless: '无损 PNG' };
+  for (const button of document.querySelectorAll('#screencast-quality-switcher .seg-option')) {
+    button.addEventListener('click', () => {
+      const next = button.dataset.scQuality;
+      applyScreencastQuality(next, true);
+      operation(`画面清晰度已切换为${labels[next] || next}`);
+    });
+  }
+}
+if ($('#screencast-retina-toggle')) {
+  let savedRetina = null;
+  try { savedRetina = localStorage.getItem('ditto_screencast_retina'); } catch { /* ignore */ }
+  if (savedRetina !== null) {
+    screencastRetinaOverride = true;
+    applyScreencastRetina(savedRetina === '1');
+  } else {
+    applyScreencastRetina(screencastRetina);
+  }
+  $('#screencast-retina-toggle').addEventListener('change', event => {
+    const enabled = Boolean(event.target.checked);
+    applyScreencastRetina(enabled, true);
+    operation(enabled ? '已开启 Retina 2x 高分屏推流' : '已切换回 1x 标准分辨率推流');
   });
 }
 

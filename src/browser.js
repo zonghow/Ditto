@@ -170,11 +170,15 @@ export class BrowserService extends EventEmitter {
     super();
     this.config = config;
     this.viewport = { ...(config.viewport || { width: 1920, height: 1080 }) };
+    this.deviceScaleFactor = config.deviceScaleFactor === 1 ? 1 : 2;
     this.pendingViewport = null;
     this.resizingViewport = false;
     this.assets = new AssetCache(id => this.emit('asset', { type: 'asset-ready', id }));
     this.control = new ControlLease(() => this.emit('change', this.summary()));
-    this.screencast = new ScreencastManager();
+    this.screencast = new ScreencastManager({
+      defaultQuality: config.screencastQuality,
+      defaultRetina: config.screencastRetina,
+    });
     this.screencast.on('frame', frame => this.emit('screencast-frame', frame));
     this.controlQueue = Promise.resolve();
     this.controlBacklog = 0;
@@ -219,6 +223,7 @@ export class BrowserService extends EventEmitter {
         '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
         '--disable-backgrounding-occluded-windows',
+        ...(this.deviceScaleFactor > 1 ? [`--force-device-scale-factor=${this.deviceScaleFactor}`] : []),
       ];
       const args = this.config.cdpPort ? [
         `--remote-debugging-port=${this.config.cdpPort}`,
@@ -233,6 +238,7 @@ export class BrowserService extends EventEmitter {
         userAgent,
         ignoreDefaultArgs: ['--enable-automation'],
         viewport: this.config.viewport,
+        deviceScaleFactor: this.deviceScaleFactor,
         acceptDownloads: true,
         args,
       });
@@ -513,6 +519,11 @@ export class BrowserService extends EventEmitter {
       ready: this.ready,
       importing: this.importing,
       viewport: this.viewport,
+      screencast: {
+        quality: this.screencast.defaultQuality,
+        retina: this.screencast.defaultRetina,
+        retinaCapable: this.deviceScaleFactor >= 2 && !this.config.attachCDP,
+      },
       transport: 'rrweb',
       lifecycle: this.config.attachCDP ? 'attached' : 'owned',
       control: this.control.summary(),
@@ -536,10 +547,12 @@ export class BrowserService extends EventEmitter {
     this.syncAllRecorderWatchState();
   }
 
-  async enableScreencast(viewerId, tabId) {
+  async enableScreencast(viewerId, tabId, options = {}) {
     const tab = this.tabs.get(tabId);
     const ok = await this.screencast.enable(tab, viewerId, this.viewport, {
       getBrowserCdp: () => this.lnaCdp,
+      quality: options.quality,
+      retina: options.retina,
     });
     this.syncAllRecorderWatchState();
     return ok;

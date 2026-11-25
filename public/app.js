@@ -1535,6 +1535,24 @@ if ('caches' in window && window.isSecureContext) {
     .catch(() => {});
 }
 
+let loginRecheckAt = 0;
+let loginRechecking = false;
+async function recheckLoginSession() {
+  if (authenticated || $('#login').hidden || loginRechecking) return;
+  const now = Date.now();
+  if (now - loginRecheckAt < 1500) return;
+  loginRecheckAt = now;
+  loginRechecking = true;
+  try {
+    await showWorkspace();
+  } catch { /* Still unauthenticated; stay quietly on login panel. */ }
+  finally { loginRechecking = false; }
+}
+window.addEventListener('focus', () => { recheckLoginSession(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') recheckLoginSession();
+});
+
 async function bootstrap() {
   const fragment = new URLSearchParams(location.hash.slice(1));
   const token = fragment.get('token');

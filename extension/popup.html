@@ -18,9 +18,12 @@
 
   <main>
     <section id="pairing-section" class="card">
-      <div class="input-group">
-        <input id="pairing" type="text" autocomplete="off" spellcheck="false" placeholder="http://开发机IP:3217" aria-label="开发机服务地址">
-        <button id="save-pairing" class="btn-primary" type="button">连接</button>
+      <div class="input-stack">
+        <input id="pairing" type="text" autocomplete="off" spellcheck="false" placeholder="服务地址，如 http://开发机IP:3217" aria-label="开发机服务地址">
+        <div class="input-group">
+          <input id="pairing-token" type="password" autocomplete="off" spellcheck="false" placeholder="Token（开启鉴权时填写）" aria-label="访问 Token">
+          <button id="save-pairing" class="btn-primary" type="button">连接</button>
+        </div>
       </div>
     </section>
 

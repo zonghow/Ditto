@@ -4,8 +4,6 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "${ROOT_DIR}"
 
-PORT="${DITTO_PORT:-3217}"
-CDP_PORT="${DITTO_CDP_PORT:-9222}"
 LOG_DIR="${DITTO_LOG_DIR:-${ROOT_DIR}/logs}"
 CONTAINER="ditto-browser"
 
@@ -22,7 +20,7 @@ fi
 DOCKER_MAJOR=$(docker version --format '{{.Server.Version}}' 2>/dev/null | cut -d. -f1 || echo "0")
 if [ "${DOCKER_MAJOR:-0}" -ge 20 ] && docker compose version >/dev/null 2>&1; then
   docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
-  DITTO_PORT="${PORT}" DITTO_LOG_DIR="${LOG_DIR}" DITTO_UID="$(id -u)" DITTO_GID="$(id -g)" docker compose up -d --build
+  DITTO_PORT="${DITTO_PORT:-3217}" DITTO_LOG_DIR="${LOG_DIR}" DITTO_UID="$(id -u)" DITTO_GID="$(id -g)" docker compose up -d --build
   exit 0
 fi
 
@@ -57,8 +55,9 @@ if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
   trap - EXIT
 fi
 
-docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
-docker run -d --name "${CONTAINER}" \
+# Pass user-facing overrides only when explicitly set so /data/config.json takes effect.
+set -- \
+  -d --name "${CONTAINER}" \
   --label io.ditto.project=ditto-browser-bridge \
   --restart unless-stopped \
   --init \
@@ -78,9 +77,16 @@ docker run -d --name "${CONTAINER}" \
   -w /app \
   -e HOME=/data \
   -e DITTO_DATA_DIR=/data \
-  -e DITTO_LOG_FILE=/logs/ditto.log \
-  -e DITTO_HOST=0.0.0.0 \
-  -e DITTO_PORT="${PORT}" \
-  -e DITTO_CDP_PORT="${CDP_PORT}" \
-  -e DITTO_DEMO=0 \
-  "${IMAGE}" node src/main.js
+  -e DITTO_LOG_FILE=/logs/ditto.log
+
+for var in DITTO_CONFIG DITTO_HOST DITTO_PORT DITTO_CDP_PORT DITTO_TOKEN DITTO_AUTH \
+           DITTO_AGENT_REMOTE DITTO_DEMO DITTO_VIEWPORT DITTO_USER_AGENT \
+           DITTO_SYNC_FRESH_MS DITTO_LOG DITTO_CHROMIUM_SANDBOX; do
+  eval "val=\${${var}:-}"
+  if [ -n "${val}" ]; then
+    set -- "$@" -e "${var}=${val}"
+  fi
+done
+
+docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+docker run "$@" "${IMAGE}" node src/main.js

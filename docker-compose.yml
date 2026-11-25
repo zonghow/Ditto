@@ -16,14 +16,13 @@ services:
     ports:
       - "${DITTO_PORT:-3217}:3217"
     environment:
-      DITTO_HOST: 0.0.0.0
-      DITTO_PORT: 3217
-      DITTO_CDP_PORT: 9222
       DITTO_UID: ${DITTO_UID:-1000}
       DITTO_GID: ${DITTO_GID:-1000}
-      DITTO_LOG_FILE: /logs/ditto.log
-      DITTO_DEMO: ${DITTO_DEMO:-0}
-      DITTO_AUTH: ${DITTO_AUTH:-0}
+      DITTO_LOG_FILE: ${DITTO_LOG_FILE:-/logs/ditto.log}
+      DITTO_TOKEN: ${DITTO_TOKEN:-}
+      DITTO_AUTH: ${DITTO_AUTH:-}
+      DITTO_DEMO: ${DITTO_DEMO:-}
+      DITTO_VIEWPORT: ${DITTO_VIEWPORT:-}
     volumes:
       - ditto-data:/data
       - ${DITTO_LOG_DIR:-./logs}:/logs

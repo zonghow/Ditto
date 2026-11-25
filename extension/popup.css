@@ -156,19 +156,23 @@ main { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px
   background: var(--card); border: 1px solid var(--line);
   border-radius: 10px; padding: 11px;
 }
+.input-stack { display: flex; flex-direction: column; gap: 7px; }
 .input-group { display: flex; gap: 7px; }
-input[type="text"] {
+input[type="text"],
+input[type="password"] {
   flex: 1; min-width: 0;
   border: 1px solid var(--line); border-radius: 7px;
   background: var(--input-bg); color: var(--text);
   padding: 8px 10px; font-size: 12.5px; outline: none;
   transition: border-color .14s ease, box-shadow .14s ease;
 }
-input[type="text"]:focus {
+input[type="text"]:focus,
+input[type="password"]:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 20%, transparent);
 }
-input[type="text"]::placeholder { color: var(--placeholder); }
+input[type="text"]::placeholder,
+input[type="password"]::placeholder { color: var(--placeholder); }
 
 .btn-primary {
   border: 0; border-radius: 7px;

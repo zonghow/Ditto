@@ -37,7 +37,7 @@ export function createApplication({ config, credentials, browser, sync, logger, 
       'Cross-Origin-Opener-Policy': 'same-origin',
     });
     if (!validHost(request.headers.host)) return response.status(403).json({ error: '不允许的 Host。' });
-    const extensionRoute = ['/api/sync', '/api/sync/auto', '/api/sync/requests', '/cookiecloud/update'].includes(request.path);
+    const extensionRoute = ['/api/sync', '/api/sync/auto', '/api/sync/requests', '/api/sync/verify', '/cookiecloud/update'].includes(request.path);
     if (!allowedOrigin(request, extensionRoute)) return response.status(403).json({ error: '不允许的请求来源。' });
     const extensionOrigin = request.headers.origin?.startsWith('chrome-extension://');
     if (extensionRoute && extensionOrigin) {
@@ -96,11 +96,16 @@ export function createApplication({ config, credentials, browser, sync, logger, 
   server.requestTimeout = 30000;
   server.headersTimeout = 15000;
 
+  const createViewerSession = authRequired && authentication.hasUnifiedToken()
+    ? () => authentication.session()
+    : null;
+
   const wsHub = createWsHub({
     server,
     credentials,
     authRequired,
     isDashboardAllowed,
+    createViewerSession,
     browser,
     sync,
     cookieRequests,
@@ -110,24 +115,55 @@ export function createApplication({ config, credentials, browser, sync, logger, 
   });
 
   const loginAttempts = new Map();
+  const verifyFailures = new Map();
+  const recordAttempt = (bucket, address, maxPerMinute) => {
+    const now = Date.now();
+    if (bucket.size > MAX_LOGIN_ATTEMPT_IPS) {
+      for (const [ip, times] of bucket) {
+        if (!times.some(time => time > now - 60000)) bucket.delete(ip);
+      }
+    }
+    const recent = (bucket.get(address) || []).filter(time => time > now - 60000);
+    if (recent.length >= maxPerMinute) {
+      bucket.set(address, recent);
+      return false;
+    }
+    recent.push(now);
+    bucket.set(address, recent);
+    return true;
+  };
+  const isRateLimited = (bucket, address, maxPerMinute) => {
+    const now = Date.now();
+    const recent = (bucket.get(address) || []).filter(time => time > now - 60000);
+    if (recent.length) bucket.set(address, recent);
+    else bucket.delete(address);
+    return recent.length >= maxPerMinute;
+  };
   app.get('/health', (request, response) => response.json({
     ok: true, browserReady: browser.ready, authRequired, extensionConnected: wsHub.hasConnectedExtension(),
   }));
+  app.post('/api/sync/verify', (request, response) => {
+    if (!authRequired) return response.json({ ok: true, authRequired: false });
+    const address = request.socket.remoteAddress || 'unknown';
+    if (isRateLimited(verifyFailures, address, 10)) {
+      return response.status(429).json({ error: '尝试过多，请一分钟后重试。' });
+    }
+    if (!authentication.isSync(request)) {
+      recordAttempt(verifyFailures, address, 10);
+      return response.status(401).json({ error: 'Token 无效，请检查服务配置。' });
+    }
+    const payload = { ok: true, authRequired: true };
+    if (createViewerSession) payload.viewerSession = createViewerSession();
+    response.json(payload);
+  });
   app.post('/api/session', express.json({ limit: '2kb' }), (request, response) => {
     if (!authRequired) return response.json({ ok: true });
-    const now = Date.now();
     const address = request.socket.remoteAddress || 'unknown';
-    if (loginAttempts.size > MAX_LOGIN_ATTEMPT_IPS) {
-      for (const [ip, times] of loginAttempts) {
-        if (!times.some(time => time > now - 60000)) loginAttempts.delete(ip);
-      }
+    if (!recordAttempt(loginAttempts, address, 10)) {
+      return response.status(429).json({ error: '尝试过多，请一分钟后重试。' });
     }
-    const recent = (loginAttempts.get(address) || []).filter(time => time > now - 60000);
-    if (recent.length >= 10) return response.status(429).json({ error: '尝试过多，请一分钟后重试。' });
-    recent.push(now);
-    loginAttempts.set(address, recent);
     if (!constantEqual(request.body?.token, credentials.dashboardToken)) {
-      return response.status(401).json({ error: '观测页配对凭据无效。' });
+      return response.status(401).json({ error: 'Token 无效，请检查后重试。' });
     }
     response.set('Set-Cookie', authentication.cookie(authentication.session()));
     response.json({ ok: true });

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtemp } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { chromium } from 'playwright';
 import { configuration, projectRoot } from '../src/config.js';
@@ -9,6 +11,8 @@ import { BrowserService } from '../src/browser.js';
 import { loadCredentials } from '../src/auth.js';
 import { SyncStore } from '../src/sync-store.js';
 import { createApplication } from '../src/app.js';
+
+const execFileAsync = promisify(execFile);
 
 process.umask(0o077);
 const dataDir = await mkdtemp(path.join(process.env.DITTO_TEST_TEMP || os.tmpdir(), 'ditto-extension-test-'));
@@ -110,6 +114,93 @@ try {
   await eventually(async () => (await browser.context.cookies('https://unselected.test')).some(c => c.name === 'discovered_once'));
   assert.equal(sync.pending, null);
   await demandPage.close();
+
+  // --- Phase 2: Unified config.json token + extension auto-login + stranger login gate + CLI auto-token ---
+  stage = 'unified-token-setup';
+  const authDataDir = await mkdtemp(path.join(process.env.DITTO_TEST_TEMP || os.tmpdir(), 'ditto-auth-ext-'));
+  const unifiedToken = 'synthetic-unified-token-e2e-2026';
+  await writeFile(path.join(authDataDir, 'config.json'), JSON.stringify({ token: unifiedToken, demo: false }), { mode: 0o600 });
+  const authConfig = configuration({ dataDir: authDataDir, port: 0, cdpPort: 0 });
+  assert.equal(authConfig.authRequired, true);
+  assert.equal(authConfig.token, unifiedToken);
+  const authCredentials = await loadCredentials(authDataDir, { token: authConfig.token });
+  const authSync = new SyncStore(authDataDir);
+  await authSync.load();
+  const authApp = createApplication({ config: authConfig, credentials: authCredentials, browser, sync: authSync });
+  let strangerContext = null;
+  try {
+    await new Promise(resolve => authApp.server.listen(0, '127.0.0.1', resolve));
+    const authPort = authApp.server.address().port;
+    const authBase = `http://127.0.0.1:${authPort}`;
+
+    // Verify local `ditto` CLI automatically reads config.json token without DITTO_TOKEN env var.
+    stage = 'cli-auto-token';
+    const { stdout: cliOut } = await execFileAsync(path.join(projectRoot, 'scripts', 'ditto'), ['status'], {
+      env: { ...process.env, DITTO_DATA_DIR: authDataDir, DITTO_PORT: String(authPort), DITTO_TOKEN: '', DITTO_URL: '' },
+    });
+    const cliStatus = JSON.parse(cliOut);
+    assert.equal(cliStatus.ok, true);
+
+    // Pair extension with wrong token -> rejected cleanly.
+    stage = 'unified-token-wrong';
+    const authPopup = await source.newPage();
+    await authPopup.goto(`chrome-extension://${extensionId}/popup.html`);
+    await authPopup.locator('#forget').click();
+    await authPopup.locator('#pairing').fill(authBase);
+    await authPopup.locator('#pairing-token').fill('wrong-token');
+    await authPopup.locator('#save-pairing').click();
+    await authPopup.locator('#result').filter({ hasText: 'Token 无效' }).waitFor();
+    assert.equal(await authPopup.locator('#connected-bar').isHidden(), true);
+
+    // Pair extension with correct token -> connects and installs HttpOnly ditto_session cookie.
+    stage = 'unified-token-connect';
+    await authPopup.locator('#pairing-token').fill(unifiedToken);
+    await authPopup.locator('#save-pairing').click();
+    await authPopup.locator('#paired').filter({ hasText: '已配对' }).waitFor();
+    await authPopup.locator('#automatic-status').filter({ hasText: '已连接' }).waitFor();
+
+    // Same browser (with extension configured) opens viewer directly -> zero login prompt!
+    stage = 'owner-viewer-auto-login';
+    const ownerViewer = await source.newPage();
+    await ownerViewer.goto(authBase);
+    await ownerViewer.locator('#workspace').waitFor({ state: 'visible' });
+    assert.equal(await ownerViewer.locator('#login').isHidden(), true);
+
+    // Another browser / stranger (no extension) opens viewer -> MUST enter token.
+    stage = 'stranger-viewer-login-gate';
+    strangerContext = await chromium.launchPersistentContext(path.join(authDataDir, 'stranger-profile'), {
+      channel: 'chromium', headless: true,
+    });
+    const strangerViewer = await strangerContext.newPage();
+    await strangerViewer.goto(authBase);
+    await strangerViewer.locator('#login').waitFor({ state: 'visible' });
+    assert.equal(await strangerViewer.locator('#workspace').isHidden(), true);
+
+    // Wrong token stays blocked on login screen.
+    await strangerViewer.locator('#dashboard-token').fill('wrong-token');
+    await strangerViewer.locator('#login-form button[type="submit"]').click();
+    await strangerViewer.locator('#toast').filter({ hasText: 'Token 无效' }).waitFor();
+    assert.equal(await strangerViewer.locator('#workspace').isHidden(), true);
+
+    // Correct token unlocks full viewer workspace.
+    await strangerViewer.locator('#dashboard-token').fill(unifiedToken);
+    await strangerViewer.locator('#login-form button[type="submit"]').click();
+    await strangerViewer.locator('#workspace').waitFor({ state: 'visible' });
+    assert.equal(await strangerViewer.locator('#login').isHidden(), true);
+
+    // Forgetting pairing in extension clears ditto_session cookie so owner reload shows login again.
+    stage = 'forget-clears-viewer-session';
+    await authPopup.locator('#forget').click();
+    await ownerViewer.reload();
+    await ownerViewer.locator('#login').waitFor({ state: 'visible' });
+
+    await ownerViewer.close();
+    await authPopup.close();
+  } finally {
+    await strangerContext?.close();
+    await authApp.close();
+  }
+
   console.log(JSON.stringify({ ok: true, checks: [
     'real Chromium loads Manifest V3 extension',
     'all HTTP/HTTPS site access is granted once from the manifest',
@@ -122,6 +213,10 @@ try {
     'opening a new tab in source Chrome proactively pushes fresh cookies to devbox',
     'applied remote tokens survive reload without destructive overwrites',
     'newly discovered remote origins still sync on demand when online',
+    'config.json unified token pairs extension and auto-authenticates viewer in the same browser',
+    'another browser without the extension requires the token before operating the viewer',
+    'local ditto CLI automatically reads token from config.json',
+    'forgetting pairing in the extension clears the auto-login viewer session cookie',
   ] }, null, 2));
 } catch (error) {
   let backgroundStatus = null;

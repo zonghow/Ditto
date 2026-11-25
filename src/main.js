@@ -17,7 +17,7 @@ const logger = createLogger({
 });
 const history = new HistoryStore(config.dataDir);
 await history.load();
-const credentials = await loadCredentials(config.dataDir);
+const credentials = await loadCredentials(config.dataDir, { token: config.token });
 const sync = config.syncUpstream ? new UpstreamSync(config.syncUpstream, credentials) : new SyncStore(config.dataDir);
 await sync.load();
 const browser = new BrowserService(config);
@@ -47,7 +47,8 @@ if (config.demo && browser.context.pages().every(page => page.url() === 'about:b
   await browser.open(`http://127.0.0.1:${config.port}/demo.html`);
   for (const page of browser.context.pages()) if (page.url() === 'about:blank') await page.close();
 }
-logger.log('server', `Ditto ready: http://${config.host}:${config.port} (auth: ${config.authRequired ? 'enabled' : 'open'}, cdp: 127.0.0.1:${config.cdpPort}, log: ${logger.filePath() || 'stdout-only'})`);
+const authMode = !config.authRequired ? 'open' : (credentials.unifiedToken ? 'token' : 'enabled');
+logger.log('server', `Ditto ready: http://${config.host}:${config.port} (auth: ${authMode}, cdp: 127.0.0.1:${config.cdpPort}, config: ${config.configFileLoaded ? config.configFile : 'none'}, log: ${logger.filePath() || 'stdout-only'})`);
 let stopping = false;
 async function stop() {
   if (stopping) return;

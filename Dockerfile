@@ -29,11 +29,7 @@ RUN mkdir -p /data /logs && chown -R node:node /data /logs && chmod 0755 /app/sc
 ENV HOME=/data \
     DITTO_DATA_DIR=/data \
     DITTO_LOG_FILE=/logs/ditto.log \
-    DITTO_HOST=0.0.0.0 \
-    DITTO_PORT=3217 \
-    DITTO_CDP_PORT=9222 \
-    DITTO_CHROMIUM_PATH=/usr/bin/chromium \
-    DITTO_DEMO=0
+    DITTO_CHROMIUM_PATH=/usr/bin/chromium
 
 EXPOSE 3217
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]

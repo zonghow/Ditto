@@ -5,7 +5,8 @@ import { readJson, writePrivateJson, privateDirectory } from './files.js';
 export const SESSION_COOKIE = 'ditto_session';
 // Chrome/RFC 6265bis caps persistent cookie Max-Age at 400 days. Sessions
 // themselves are permanent (expires=0) and sliding-renewed on every /api/state
-// visit so a logged-in browser stays authenticated until explicit logout.
+// visit so a logged-in browser stays authenticated until explicit logout or
+// token rotation.
 export const SESSION_SECONDS = 400 * 24 * 60 * 60;
 
 export function constantEqual(left, right) {
@@ -15,38 +16,60 @@ export function constantEqual(left, right) {
   return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
 }
 
-export async function loadCredentials(dataDir) {
+export async function loadCredentials(dataDir, { token } = {}) {
   await privateDirectory(dataDir);
   const file = path.join(dataDir, 'credentials.json');
-  const existing = await readJson(file);
-  if (existing) {
+  let credentials = await readJson(file);
+  if (credentials) {
     for (const name of ['dashboardToken', 'syncToken', 'sessionKey']) {
-      if (typeof existing[name] !== 'string' || existing[name].length < 32) {
+      if (typeof credentials[name] !== 'string' || credentials[name].length < 32) {
         throw new Error('Invalid private credentials file.');
       }
     }
-    if (!existing.cookieCloud?.uuid || !existing.cookieCloud?.password) {
+    if (!credentials.cookieCloud?.uuid || !credentials.cookieCloud?.password) {
       throw new Error('Invalid CookieCloud credentials.');
     }
-    return existing;
+  } else {
+    credentials = {
+      dashboardToken: randomBytes(32).toString('base64url'),
+      syncToken: randomBytes(32).toString('base64url'),
+      sessionKey: randomBytes(32).toString('base64url'),
+      cookieCloud: { uuid: randomUUID(), password: randomBytes(24).toString('base64url') },
+    };
+    await writePrivateJson(file, credentials);
   }
-  const credentials = {
-    dashboardToken: randomBytes(32).toString('base64url'),
-    syncToken: randomBytes(32).toString('base64url'),
-    sessionKey: randomBytes(32).toString('base64url'),
-    cookieCloud: { uuid: randomUUID(), password: randomBytes(24).toString('base64url') },
+  const unified = typeof token === 'string' && token.trim() ? token.trim() : '';
+  if (unified) {
+    return {
+      ...credentials,
+      dashboardToken: unified,
+      syncToken: unified,
+      unifiedToken: true,
+    };
+  }
+  return {
+    ...credentials,
+    unifiedToken: constantEqual(credentials.dashboardToken, credentials.syncToken),
   };
-  await writePrivateJson(file, credentials);
-  return credentials;
 }
 
 export class Authentication {
   constructor(credentials) {
     this.credentials = credentials;
+    // Bind session signatures to both the private sessionKey and active
+    // dashboardToken so rotating the configured token immediately invalidates
+    // all previously issued permanent sessions.
+    this._signingKey = createHmac('sha256', credentials.sessionKey)
+      .update(`ditto-session:${credentials.dashboardToken}`)
+      .digest();
+  }
+
+  hasUnifiedToken() {
+    return Boolean(this.credentials.unifiedToken || constantEqual(this.credentials.dashboardToken, this.credentials.syncToken));
   }
 
   signature(payload) {
-    return createHmac('sha256', this.credentials.sessionKey).update(payload).digest('base64url');
+    return createHmac('sha256', this._signingKey).update(payload).digest('base64url');
   }
 
   session(now = Date.now(), ttlSeconds = 0) {

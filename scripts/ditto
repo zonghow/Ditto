@@ -5,6 +5,8 @@ set -eu
 # Uses python3 (preinstalled on Linux/macOS devboxes) or node as fallback.
 
 if command -v python3 >/dev/null 2>&1; then
+  DITTO_SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  export DITTO_SCRIPT_DIR
   exec python3 - "$@" <<'PY'
 import base64
 import json
@@ -15,8 +17,42 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = os.environ.get("DITTO_URL", f"http://127.0.0.1:{os.environ.get('DITTO_PORT', '3217')}").rstrip("/")
+def _load_local_config():
+    candidates = []
+    explicit = os.environ.get("DITTO_CONFIG", "").strip()
+    if explicit:
+        candidates.append(explicit)
+    else:
+        data_dir = os.environ.get("DITTO_DATA_DIR", "").strip()
+        if data_dir:
+            candidates.append(os.path.join(data_dir, "config.json"))
+        candidates.append(os.path.expanduser("~/.local/share/ditto/config.json"))
+        script_dir = os.environ.get("DITTO_SCRIPT_DIR", "").strip()
+        if script_dir:
+            candidates.append(os.path.join(os.path.dirname(script_dir), ".local", "config.json"))
+    for path in candidates:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            continue
+    return {}
+
+_LOCAL_CFG = _load_local_config()
+_CFG_PORT = _LOCAL_CFG.get("port")
+_DEFAULT_PORT = str(_CFG_PORT) if isinstance(_CFG_PORT, int) and 1 <= _CFG_PORT <= 65535 else "3217"
+_ENV_URL = os.environ.get("DITTO_URL", "").strip()
+_ENV_PORT = os.environ.get("DITTO_PORT", "").strip()
+BASE = (_ENV_URL or f"http://127.0.0.1:{_ENV_PORT or _DEFAULT_PORT}").rstrip("/")
+_PARSED_BASE = urllib.parse.urlparse(BASE)
+_IS_LOOPBACK = (_PARSED_BASE.hostname or "").lower() in ("127.0.0.1", "localhost", "::1")
 TOKEN = os.environ.get("DITTO_TOKEN", "").strip()
+if not TOKEN and (_IS_LOOPBACK or os.environ.get("DITTO_CONFIG", "").strip()):
+    _cfg_token = _LOCAL_CFG.get("token")
+    if isinstance(_cfg_token, str) and _cfg_token.strip():
+        TOKEN = _cfg_token.strip()
 
 USAGE = """Usage: ditto <command> [args] [options]
 

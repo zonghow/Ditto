@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { captureSnapshot, parseOrigins, parsePairingInput, permissionPatterns, cookieMatches, parentOrigins, uploadSnapshot } from '../extension/capture.js';
+import {
+  captureSnapshot,
+  clearViewerSessionCookie,
+  cookieMatches,
+  installViewerSessionCookie,
+  parentOrigins,
+  parseOrigins,
+  parsePairingInput,
+  permissionPatterns,
+  uploadSnapshot,
+  verifyPairing,
+} from '../extension/capture.js';
 
 test('extension origin selection remains explicit and exact', () => {
   assert.deepEqual(parseOrigins('https://example.com/a\nhttps://example.com\nhttp://example.com:8080'),
@@ -84,4 +95,53 @@ test('extension parses direct devbox URLs with or without scheme and uploads wit
   assert.equal(sentUrl, 'http://10.20.30.40:3217/api/sync');
   assert.equal(sentHeaders.Authorization, undefined);
   assert.equal(result.importedCookies, 2);
+});
+
+test('extension pairing supports separate endpoint + token, verifies token, and manages viewer session cookie', async () => {
+  assert.deepEqual(parsePairingInput('10.20.30.40:3217', 'my-token'),
+    { endpoint: 'http://10.20.30.40:3217', syncToken: 'my-token' });
+  assert.deepEqual(parsePairingInput('{"endpoint":"https://ditto.example.com","token":"json-tok"}'),
+    { endpoint: 'https://ditto.example.com', syncToken: 'json-tok' });
+  assert.deepEqual(parsePairingInput('{"endpoint":"https://ditto.example.com","syncToken":"json-tok"}', 'override-tok'),
+    { endpoint: 'https://ditto.example.com', syncToken: 'override-tok' });
+
+  let setArgs = null;
+  let removeArgs = null;
+  const fakeApi = {
+    cookies: {
+      set: async details => { setArgs = details; },
+      remove: async details => { removeArgs = details; },
+    },
+  };
+  assert.equal(await installViewerSessionCookie('http://10.20.30.40:3217', '0.abc.sig', fakeApi), true);
+  assert.equal(setArgs.url, 'http://10.20.30.40:3217/api');
+  assert.equal(setArgs.name, 'ditto_session');
+  assert.equal(setArgs.value, '0.abc.sig');
+  assert.equal(setArgs.path, '/api');
+  assert.equal(setArgs.httpOnly, true);
+  assert.equal(setArgs.sameSite, 'strict');
+  assert.equal(setArgs.secure, false);
+  assert.equal(setArgs.domain, undefined);
+
+  assert.equal(await installViewerSessionCookie('https://ditto.example.com', '0.abc.sig', fakeApi), true);
+  assert.equal(setArgs.secure, true);
+
+  assert.equal(await clearViewerSessionCookie('http://10.20.30.40:3217', fakeApi), true);
+  assert.deepEqual(removeArgs, { url: 'http://10.20.30.40:3217/api', name: 'ditto_session' });
+
+  let verifyReq = null;
+  const verified = await verifyPairing({ endpoint: 'http://10.20.30.40:3217', syncToken: 'tok-ok' }, async (url, opts) => {
+    verifyReq = { url, opts };
+    return { ok: true, status: 200, json: async () => ({ ok: true, authRequired: true, viewerSession: '0.n.s' }) };
+  });
+  assert.equal(verifyReq.url, 'http://10.20.30.40:3217/api/sync/verify');
+  assert.equal(verifyReq.opts.headers.Authorization, 'Bearer tok-ok');
+  assert.equal(verified.viewerSession, '0.n.s');
+
+  await assert.rejects(
+    verifyPairing({ endpoint: 'http://10.20.30.40:3217', syncToken: 'bad' }, async () => ({
+      ok: false, status: 401, json: async () => ({ error: 'Token 无效，请检查服务配置。' }),
+    })),
+    /Token 无效/,
+  );
 });

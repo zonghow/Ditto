@@ -363,3 +363,92 @@ test('viewer reload, navigate and new-tab open re-sync fresh login state after s
   ]);
   extWs.close();
 });
+
+test('unified token allows extension verify + WS handshake to mint viewer session while keeping legacy split-token isolated', async t => {
+  const dataDir = await mkdtemp(path.join(process.env.DITTO_TEST_TEMP || os.tmpdir(), 'ditto-unified-http-'));
+  const token = 'unified-token-for-http-test';
+  const credentials = await loadCredentials(dataDir, { token });
+  const sync = new SyncStore(dataDir);
+  await sync.load();
+  const browser = new EventEmitter();
+  Object.assign(browser, {
+    ready: true,
+    control: new ControlLease(),
+    assets: new AssetCache(),
+    summary: () => ({ ready: true, importing: false, tabs: [] }),
+    cachedRecordings: () => [],
+    setViewer() {},
+    removeViewer() {},
+    importSnapshot: async () => ({ importedCookies: 0, importedStorage: 0, importedOrigins: 0 }),
+  });
+  const application = createApplication({
+    config: configuration({ port: 0, dataDir, token }),
+    credentials,
+    sync,
+    browser,
+  });
+  await new Promise(resolve => application.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => application.close());
+  const base = `http://127.0.0.1:${application.server.address().port}`;
+  const extensionOrigin = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
+
+  // Wrong or missing token is rejected on /api/sync/verify.
+  assert.equal((await fetch(`${base}/api/sync/verify`, { method: 'POST', headers: { Origin: extensionOrigin } })).status, 401);
+  assert.equal((await fetch(`${base}/api/sync/verify`, {
+    method: 'POST',
+    headers: { Origin: extensionOrigin, Authorization: 'Bearer wrong-token' },
+  })).status, 401);
+
+  // Correct unified token verifies and mints a permanent viewerSession cookie value.
+  const verified = await fetch(`${base}/api/sync/verify`, {
+    method: 'POST',
+    headers: { Origin: extensionOrigin, Authorization: `Bearer ${token}` },
+  });
+  assert.equal(verified.status, 200);
+  const verifiedJson = await verified.json();
+  assert.equal(verifiedJson.ok, true);
+  assert.equal(verifiedJson.authRequired, true);
+  assert.match(verifiedJson.viewerSession, /^0\./);
+
+  // That viewerSession works directly as ditto_session cookie on /api/state.
+  const stateRes = await fetch(`${base}/api/state`, {
+    headers: { Cookie: `ditto_session=${verifiedJson.viewerSession}` },
+  });
+  assert.equal(stateRes.status, 200);
+  assert.equal((await stateRes.json()).authRequired, true);
+
+  // Extension WebSocket handshake with unified token also delivers viewerSession.
+  const extWs = new WebSocket(`${base.replace('http:', 'ws:')}/api/sync/live`, { origin: extensionOrigin });
+  await new Promise((resolve, reject) => { extWs.once('open', resolve); extWs.once('error', reject); });
+  const welcomePromise = new Promise(resolve => extWs.once('message', raw => resolve(JSON.parse(raw.toString()))));
+  extWs.send(JSON.stringify({ type: 'authenticate', token }));
+  const welcome = await welcomePromise;
+  assert.equal(welcome.type, 'sync-requests');
+  assert.match(welcome.viewerSession, /^0\./);
+  const wsSessionState = await fetch(`${base}/api/state`, {
+    headers: { Cookie: `ditto_session=${welcome.viewerSession}` },
+  });
+  assert.equal(wsSessionState.status, 200);
+  extWs.close();
+
+  // In legacy split-token mode (syncToken !== dashboardToken), /api/sync/verify never mints viewerSession.
+  const splitDir = await mkdtemp(path.join(process.env.DITTO_TEST_TEMP || os.tmpdir(), 'ditto-split-http-'));
+  const splitCreds = await loadCredentials(splitDir);
+  const splitSync = new SyncStore(splitDir);
+  await splitSync.load();
+  const splitApp = createApplication({
+    config: configuration({ port: 0, dataDir: splitDir, authRequired: true }),
+    credentials: splitCreds,
+    sync: splitSync,
+    browser,
+  });
+  await new Promise(resolve => splitApp.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => splitApp.close());
+  const splitBase = `http://127.0.0.1:${splitApp.server.address().port}`;
+  const splitVerify = await fetch(`${splitBase}/api/sync/verify`, {
+    method: 'POST',
+    headers: { Origin: extensionOrigin, Authorization: `Bearer ${splitCreds.syncToken}` },
+  }).then(r => r.json());
+  assert.equal(splitVerify.ok, true);
+  assert.equal(splitVerify.viewerSession, undefined);
+});

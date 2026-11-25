@@ -1,5 +1,5 @@
 import { AutoSync } from './auto-sync.js';
-import { originOf, syncEndpoint } from './capture.js';
+import { installViewerSessionCookie, originOf, syncEndpoint } from './capture.js';
 
 // MV3 WebSocket heartbeat keeps the worker alive while Chrome is running.
 // Background sync combines:
@@ -145,6 +145,10 @@ function connect() {
     try {
       const message = JSON.parse(event.data);
       if (message.type === 'sync-requests') {
+        if (typeof message.viewerSession === 'string' && message.viewerSession && endpoint) {
+          installViewerSessionCookie(endpoint, message.viewerSession).catch(() => {});
+        }
+        engine.lastError = null;
         engine.setConnection('online');
         engine.accept(message);
         if (!syncedOnThisConnection) {
@@ -161,14 +165,16 @@ function connect() {
       }
     } catch { /* No untrusted protocol body in diagnostics. */ }
   });
-  ws.addEventListener('close', () => {
+  ws.addEventListener('close', event => {
     if (socket !== ws) return;
     socket = null;
     syncedOnThisConnection = false;
     clearInterval(heartbeat);
     engine.resetDelta();
+    const authRejected = event?.code === 1008;
+    if (authRejected) engine.lastError = 'Token 无效或已变更，请点击「切换」重新输入 Token。';
     engine.setConnection('offline');
-    retry = setTimeout(() => reload(), 5000);
+    retry = setTimeout(() => reload(), authRejected ? 30000 : 5000);
   });
   ws.addEventListener('error', () => {});
 }

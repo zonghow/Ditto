@@ -218,25 +218,80 @@ export async function captureFullSnapshot(api = chrome, progress = () => {}, { e
   };
 }
 
-export function parsePairingInput(raw) {
+const VIEWER_SESSION_COOKIE = 'ditto_session';
+const VIEWER_SESSION_SECONDS = 400 * 24 * 60 * 60;
+
+export function parsePairingInput(raw, rawToken = '') {
   const trimmed = String(raw ?? '').trim();
   if (!trimmed) throw new Error('请输入开发机服务地址，例如 http://10.0.0.2:3217');
+  const explicitToken = typeof rawToken === 'string' && rawToken.trim() ? rawToken.trim() : '';
   if (trimmed.startsWith('{')) {
     let parsed;
     try { parsed = JSON.parse(trimmed); } catch { throw new Error('连接配置 JSON 格式错误。'); }
     const endpoint = originOf(parsed.endpoint);
-    const syncToken = typeof parsed.syncToken === 'string' && parsed.syncToken.trim() ? parsed.syncToken.trim() : undefined;
+    const jsonToken = typeof parsed.syncToken === 'string' && parsed.syncToken.trim()
+      ? parsed.syncToken.trim()
+      : (typeof parsed.token === 'string' && parsed.token.trim() ? parsed.token.trim() : '');
+    const syncToken = explicitToken || jsonToken;
     return syncToken ? { endpoint, syncToken } : { endpoint };
   }
   const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^[\w.-]+:\d/.test(trimmed)
     ? trimmed
     : `http://${trimmed}`;
-  return { endpoint: originOf(withScheme) };
+  const endpoint = originOf(withScheme);
+  return explicitToken ? { endpoint, syncToken: explicitToken } : { endpoint };
 }
 
 export function syncEndpoint(settings) {
   if (!settings?.endpoint) throw new Error('请先连接开发机服务地址。');
   return originOf(settings.endpoint);
+}
+
+export async function installViewerSessionCookie(endpoint, viewerSession, api = chrome) {
+  if (typeof viewerSession !== 'string' || !viewerSession || viewerSession.length > 200) return false;
+  if (!api?.cookies?.set) return false;
+  const origin = originOf(endpoint);
+  await api.cookies.set({
+    url: `${origin}/api`,
+    name: VIEWER_SESSION_COOKIE,
+    value: viewerSession,
+    path: '/api',
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: origin.startsWith('https://'),
+    expirationDate: Math.floor(Date.now() / 1000) + VIEWER_SESSION_SECONDS,
+  });
+  return true;
+}
+
+export async function clearViewerSessionCookie(endpoint, api = chrome) {
+  if (!endpoint || !api?.cookies?.remove) return false;
+  let origin;
+  try { origin = originOf(endpoint); } catch { return false; }
+  await api.cookies.remove({
+    url: `${origin}/api`,
+    name: VIEWER_SESSION_COOKIE,
+  });
+  return true;
+}
+
+export async function verifyPairing(settings, fetcher = fetch) {
+  const endpoint = syncEndpoint(settings);
+  const headers = {};
+  if (settings.syncToken) headers.Authorization = `Bearer ${settings.syncToken}`;
+  const response = await fetcher(`${endpoint}/api/sync/verify`, {
+    method: 'POST',
+    headers,
+    signal: AbortSignal.timeout(5000),
+  });
+  if (response.status === 404 && !settings.syncToken) {
+    return { ok: true, authRequired: false };
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || (response.status === 401 ? 'Token 无效，请检查服务配置。' : `连接校验失败 (${response.status})`));
+  }
+  return data;
 }
 
 export async function prepareUploadBody(payload, { allowGzip = true } = {}) {

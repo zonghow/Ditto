@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import { mkdtemp } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { Authentication, SESSION_SECONDS, allowedOrigin, constantEqual, validHost } from '../src/auth.js';
+import { Authentication, SESSION_SECONDS, allowedOrigin, constantEqual, loadCredentials, validHost } from '../src/auth.js';
 
 const credentials = { dashboardToken: randomBytes(32).toString('hex'), syncToken: randomBytes(32).toString('hex'),
   sessionKey: randomBytes(32).toString('hex') };
@@ -50,4 +53,31 @@ test('constantEqual never accepts empty credentials', () => {
   assert.equal(constantEqual('', ''), false);
   assert.equal(constantEqual('one', 'onetwo'), false);
   assert.equal(constantEqual('one', 'one'), true);
+});
+
+test('unified token shares dashboard/sync auth and rotating token invalidates old permanent sessions', async () => {
+  const dataDir = await mkdtemp(path.join(process.env.DITTO_TEST_TEMP || os.tmpdir(), 'ditto-auth-unified-'));
+  const creds1 = await loadCredentials(dataDir, { token: 'unified-secret-v1' });
+  assert.equal(creds1.unifiedToken, true);
+  assert.equal(creds1.dashboardToken, 'unified-secret-v1');
+  assert.equal(creds1.syncToken, 'unified-secret-v1');
+
+  const auth1 = new Authentication(creds1);
+  assert.equal(auth1.hasUnifiedToken(), true);
+  const req = { headers: { authorization: 'Bearer unified-secret-v1' } };
+  assert.equal(auth1.isDashboard(req), true);
+  assert.equal(auth1.isSync(req), true);
+
+  const sessionV1 = auth1.session();
+  assert.equal(auth1.validSession(sessionV1), true);
+
+  // Restart with the same token keeps permanent sessions valid.
+  const creds1Again = await loadCredentials(dataDir, { token: 'unified-secret-v1' });
+  const auth1Again = new Authentication(creds1Again);
+  assert.equal(auth1Again.validSession(sessionV1), true);
+
+  // Rotating token immediately invalidates all previously issued sessions.
+  const creds2 = await loadCredentials(dataDir, { token: 'unified-secret-v2' });
+  const auth2 = new Authentication(creds2);
+  assert.equal(auth2.validSession(sessionV1), false);
 });

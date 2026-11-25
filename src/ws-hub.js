@@ -33,6 +33,7 @@ export function createWsHub({
   credentials,
   authRequired,
   isDashboardAllowed,
+  createViewerSession,
   browser,
   sync,
   cookieRequests,
@@ -167,7 +168,11 @@ export function createWsHub({
           ws.authenticated = true;
           clearTimeout(timeout);
           log('ext', `connected (clients=${connectedExtensionCount()})`);
-          send(ws, { type: 'sync-requests', ...cookieRequests.summary(sync.summary()) });
+          const welcome = { type: 'sync-requests', ...cookieRequests.summary(sync.summary()) };
+          if (authRequired && typeof createViewerSession === 'function') {
+            welcome.viewerSession = createViewerSession();
+          }
+          send(ws, welcome);
           state();
         } else if (message.type === 'heartbeat') {
           send(ws, { type: 'sync-requests', ...cookieRequests.summary(sync.summary()) });

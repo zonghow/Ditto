@@ -664,6 +664,7 @@ try {
     assert.equal(pwaRemoved.swCount, 0);
     checks.push('viewer does not expose PWA manifest, install action, or service worker');
     // Built-in Console + JS REPL + Network DevTools panel check
+    await observer.locator(`.tab-button[data-tab-id="${observedTab.id}"]`).click();
     await observer.locator('#devtools-toggle').click();
     await observer.locator('#devtools-panel').waitFor({ state: 'visible' });
     await observer.locator('#devtools-input').fill('({ answer: 21 + 21, nested: [1, 2] })');

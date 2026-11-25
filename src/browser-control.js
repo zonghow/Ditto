@@ -5,6 +5,7 @@ import { validateScreencastInput, dispatchScreencastInput } from './screencast.j
 
 export function performScreencastInput(browser, id, input) {
   const command = validateScreencastInput(input);
+  browser.screencast?.noteActivity?.(command.tabId);
   if (command.action === 'mousemove' && browser.queuedScreencastMove &&
     browser.queuedScreencastMove.tabId === command.tabId) {
     browser.queuedScreencastMove.x = command.x;

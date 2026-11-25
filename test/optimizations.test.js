@@ -271,6 +271,66 @@ test('performScreencastInput coalesces mousemove without dropping final position
   ]);
 });
 
+test('ScreencastManager deduplicates identical frames and applies interaction-aware Ack pacing with instant wakeup', async () => {
+  const manager = new ScreencastManager({ activeWindowMs: 40, idleAckDelayMs: 120 });
+  const cdpEvents = new EventEmitter();
+  const sent = [];
+  const cdp = {
+    on: (ev, fn) => cdpEvents.on(ev, fn),
+    off: (ev, fn) => cdpEvents.off(ev, fn),
+    send: async (method, params) => { sent.push({ method, params, at: Date.now() }); },
+  };
+  const tab = {
+    id: 'sc-dedup-tab',
+    hidden: false,
+    crashed: false,
+    cdp,
+    page: {
+      isClosed: () => false,
+      viewportSize: () => ({ width: 1280, height: 720 }),
+      bringToFront: async () => {},
+    },
+  };
+  const emitted = [];
+  manager.on('frame', frame => emitted.push(frame));
+  await manager.enable(tab, 'viewer-1', { width: 1280, height: 720 });
+
+  const jpegA = Buffer.from([0xff, 0xd8, 0x01, 0x02, 0xff, 0xd9]).toString('base64');
+  const jpegB = Buffer.from([0xff, 0xd8, 0x03, 0x04, 0xff, 0xd9]).toString('base64');
+
+  // 1. Active window: immediate Ack + duplicate frame suppressed
+  cdpEvents.emit('Page.screencastFrame', { sessionId: 1, data: jpegA, metadata: { deviceWidth: 1280, deviceHeight: 720 } });
+  cdpEvents.emit('Page.screencastFrame', { sessionId: 2, data: jpegA, metadata: { deviceWidth: 1280, deviceHeight: 720 } });
+  cdpEvents.emit('Page.screencastFrame', { sessionId: 3, data: jpegB, metadata: { deviceWidth: 1280, deviceHeight: 720 } });
+  assert.equal(emitted.length, 2);
+  assert.equal(manager.sessions.get('sc-dedup-tab').dedupedFrames, 1);
+  const acksAfterActive = sent.filter(s => s.method === 'Page.screencastFrameAck').map(s => s.params.sessionId);
+  assert.deepEqual(acksAfterActive, [1, 2, 3]);
+
+  // 2. Idle window: Ack is delayed by idleAckDelayMs
+  await new Promise(resolve => setTimeout(resolve, 60));
+  cdpEvents.emit('Page.screencastFrame', { sessionId: 4, data: jpegA, metadata: { deviceWidth: 1280, deviceHeight: 720 } });
+  assert.equal(emitted.length, 3);
+  assert.equal(sent.some(s => s.method === 'Page.screencastFrameAck' && s.params.sessionId === 4), false);
+
+  // 3. noteActivity wakes up and immediately flushes the pending idle Ack
+  manager.noteActivity('sc-dedup-tab');
+  assert.equal(sent.some(s => s.method === 'Page.screencastFrameAck' && s.params.sessionId === 4), true);
+
+  // 4. Subsequent frame during idle waits full idleAckDelayMs then fires automatically
+  await new Promise(resolve => setTimeout(resolve, 60));
+  cdpEvents.emit('Page.screencastFrame', { sessionId: 5, data: jpegB, metadata: { deviceWidth: 1280, deviceHeight: 720 } });
+  assert.equal(sent.some(s => s.method === 'Page.screencastFrameAck' && s.params.sessionId === 5), false);
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(sent.some(s => s.method === 'Page.screencastFrameAck' && s.params.sessionId === 5), true);
+
+  // 5. disable cancels any pending idle Ack timer cleanly
+  cdpEvents.emit('Page.screencastFrame', { sessionId: 6, data: jpegA, metadata: { deviceWidth: 1280, deviceHeight: 720 } });
+  await manager.disable('sc-dedup-tab', 'viewer-1');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(sent.some(s => s.method === 'Page.screencastFrameAck' && s.params.sessionId === 6), false);
+});
+
 test('accept-dialog and dismiss-dialog handle alert, confirm, and prompt dialogs cleanly', async () => {
   const browser = new BrowserService({ viewport: { width: 1280, height: 800 } });
   browser.ready = true;

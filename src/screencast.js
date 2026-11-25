@@ -97,7 +97,13 @@ export function validateScreencastInput(input) {
 }
 
 export class ScreencastManager extends EventEmitter {
-  sessions = new Map(); // tabId -> { tab, viewers: Set<string>, cdp, handler, lastFrame, syncedBoundsKey, syncingBounds, browserCdp }
+  sessions = new Map(); // tabId -> { tab, viewers: Set<string>, cdp, handler, lastFrame, syncedBoundsKey, syncingBounds, getBrowserCdp, fallbackVp, activeUntil, ackTimer, pendingAckSessionId, dedupedFrames }
+
+  constructor({ activeWindowMs = 1500, idleAckDelayMs = 180 } = {}) {
+    super();
+    this.activeWindowMs = activeWindowMs;
+    this.idleAckDelayMs = idleAckDelayMs;
+  }
 
   hasViewers(tabId) {
     return (this.sessions.get(tabId)?.viewers.size || 0) > 0;
@@ -118,6 +124,50 @@ export class ScreencastManager extends EventEmitter {
       offsetTop: frame.offsetTop,
       pageScaleFactor: frame.pageScaleFactor,
     };
+  }
+
+  clearPendingAck(session) {
+    if (!session) return;
+    clearTimeout(session.ackTimer);
+    session.ackTimer = null;
+    session.pendingAckSessionId = null;
+  }
+
+  flushPendingAck(session) {
+    if (!session || session.pendingAckSessionId === null) return;
+    const sessionId = session.pendingAckSessionId;
+    this.clearPendingAck(session);
+    session.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  }
+
+  scheduleAck(session, sessionId) {
+    if (!session || sessionId === undefined || sessionId === null) return;
+    // Flush any prior un-acked sessionId first so Chromium's compositor queue never stalls.
+    if (session.pendingAckSessionId !== null) {
+      this.flushPendingAck(session);
+    }
+    const isActive = Date.now() < session.activeUntil;
+    if (isActive || this.idleAckDelayMs <= 0) {
+      session.cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+      return;
+    }
+    session.pendingAckSessionId = sessionId;
+    session.ackTimer = setTimeout(() => {
+      session.ackTimer = null;
+      const pending = session.pendingAckSessionId;
+      session.pendingAckSessionId = null;
+      if (pending !== null && this.sessions.get(session.tab.id) === session) {
+        session.cdp.send('Page.screencastFrameAck', { sessionId: pending }).catch(() => {});
+      }
+    }, this.idleAckDelayMs);
+    session.ackTimer.unref?.();
+  }
+
+  noteActivity(tabId) {
+    const session = this.sessions.get(tabId);
+    if (!session) return;
+    session.activeUntil = Date.now() + this.activeWindowMs;
+    this.flushPendingAck(session);
   }
 
   startParams(vp) {
@@ -178,6 +228,7 @@ export class ScreencastManager extends EventEmitter {
     let session = this.sessions.get(tab.id);
     if (session) {
       session.viewers.add(viewerId);
+      this.noteActivity(tab.id);
       if (session.lastFrame) {
         this.emit('frame', { ...session.lastFrame, targetViewerId: viewerId });
       }
@@ -200,23 +251,49 @@ export class ScreencastManager extends EventEmitter {
       syncingBounds: false,
       getBrowserCdp,
       fallbackVp,
+      activeUntil: Date.now() + this.activeWindowMs,
+      ackTimer: null,
+      pendingAckSessionId: null,
+      dedupedFrames: 0,
     };
     const handler = params => {
-      cdp.send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+      this.scheduleAck(session, params.sessionId);
       const curVp = tab.page.viewportSize() || session.fallbackVp || { width: 1280, height: 800 };
       const rawOffsetTop = Number(params.metadata?.offsetTop);
       const rawScale = Number(params.metadata?.pageScaleFactor);
+      const rawBuffer = Buffer.from(params.data, 'base64');
+      const width = params.metadata?.deviceWidth || curVp.width;
+      const height = params.metadata?.deviceHeight || curVp.height;
+      const offsetTop = Number.isFinite(rawOffsetTop) && rawOffsetTop > 0 ? rawOffsetTop : 0;
+      const pageScaleFactor = Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1;
+      const prev = session.lastFrame;
+      const unchanged = Boolean(
+        prev
+        && prev.rawBuffer.length === rawBuffer.length
+        && prev.width === width
+        && prev.height === height
+        && prev.viewportWidth === curVp.width
+        && prev.viewportHeight === curVp.height
+        && prev.offsetTop === offsetTop
+        && prev.pageScaleFactor === pageScaleFactor
+        && prev.rawBuffer.equals(rawBuffer),
+      );
+      if (unchanged) {
+        session.dedupedFrames++;
+        this.syncWindowBounds(session, curVp, params.metadata).catch(() => {});
+        return;
+      }
       const frame = {
         type: 'screencast-frame',
         tabId: tab.id,
         data: params.data,
-        rawBuffer: Buffer.from(params.data, 'base64'),
-        width: params.metadata?.deviceWidth || curVp.width,
-        height: params.metadata?.deviceHeight || curVp.height,
+        rawBuffer,
+        width,
+        height,
         viewportWidth: curVp.width,
         viewportHeight: curVp.height,
-        offsetTop: Number.isFinite(rawOffsetTop) && rawOffsetTop > 0 ? rawOffsetTop : 0,
-        pageScaleFactor: Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 1,
+        offsetTop,
+        pageScaleFactor,
         timestamp: Date.now(),
       };
       session.lastFrame = frame;
@@ -229,6 +306,7 @@ export class ScreencastManager extends EventEmitter {
     try {
       await cdp.send('Page.startScreencast', this.startParams(vp));
     } catch {
+      this.clearPendingAck(session);
       cdp.off('Page.screencastFrame', handler);
       this.sessions.delete(tab.id);
       throw new InputError('当前页面不支持画面直连模式。', 409);
@@ -241,6 +319,9 @@ export class ScreencastManager extends EventEmitter {
     if (!session || !viewport?.width || !viewport?.height) return;
     session.fallbackVp = viewport;
     session.syncedBoundsKey = null;
+    session.lastFrame = null;
+    session.activeUntil = Date.now() + this.activeWindowMs;
+    this.clearPendingAck(session);
     if (session.tab?.page?.isClosed?.()) return;
     try {
       await session.cdp.send('Page.stopScreencast').catch(() => {});
@@ -267,6 +348,7 @@ export class ScreencastManager extends EventEmitter {
     if (!session) return;
     session.viewers.delete(viewerId);
     if (session.viewers.size > 0) return;
+    this.clearPendingAck(session);
     this.sessions.delete(tabId);
     session.cdp.off('Page.screencastFrame', session.handler);
     await session.cdp.send('Page.stopScreencast').catch(() => {});
@@ -284,6 +366,7 @@ export class ScreencastManager extends EventEmitter {
   async removeTab(tabId) {
     const session = this.sessions.get(tabId);
     if (!session) return;
+    this.clearPendingAck(session);
     this.sessions.delete(tabId);
     session.cdp.off('Page.screencastFrame', session.handler);
     await session.cdp.send('Page.stopScreencast').catch(() => {});

@@ -376,7 +376,13 @@ export class BrowserService extends EventEmitter {
       this.screencast.resyncBounds();
     }
     this.emit('change', this.summary());
-    const refresh = () => { tab.loading = false; this.refresh(tab, { refreshFavicon: true }); this.ensureRecorder(tab); this.refreshHistory(tab); };
+    const refresh = () => {
+      tab.loading = false;
+      this.screencast.noteActivity(tab.id);
+      this.refresh(tab, { refreshFavicon: true });
+      this.ensureRecorder(tab);
+      this.refreshHistory(tab);
+    };
     page.on('domcontentloaded', refresh);
     page.on('load', refresh);
     page.on('framenavigated', frame => { if (frame === page.mainFrame()) refresh(); });
@@ -667,6 +673,7 @@ export class BrowserService extends EventEmitter {
     tab.agentAction = ACTION_LABELS[actionKey] || actionKey;
     tab.agentUpdatedAt = Date.now();
     tab.agentActiveUntil = Date.now() + 2600;
+    this.screencast.noteActivity(tab.id);
     clearTimeout(tab.agentCooldownTimer);
     this.emit('change', this.summary());
     try {

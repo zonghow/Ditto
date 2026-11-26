@@ -1,7 +1,7 @@
 const SPECIAL_KEYS = new Set(['Enter', 'Tab', 'Backspace', 'Delete', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
 
 export class RemoteControl {
-  constructor({ surface, editor, select, send, notify, blocked = () => {} }) {
+  constructor({ surface, editor, select, send, notify, blocked = () => {}, onCopy = null }) {
     this.surface = surface;
     this.editor = editor;
     editor.maxLength = 16384;
@@ -9,6 +9,7 @@ export class RemoteControl {
     this.send = send;
     this.notify = notify;
     this.blocked = blocked;
+    this.onCopy = onCopy;
     this.enabled = false;
     this.target = null;
     this.lastMove = 0;
@@ -19,22 +20,77 @@ export class RemoteControl {
     this.wheelRemX = 0;
     this.wheelRemY = 0;
     this.wheelRemAt = 0;
-    const clearPress = () => this.replay?.press?.(null);
-    window.addEventListener('pointerup', clearPress);
-    window.addEventListener('pointercancel', clearPress);
-    window.addEventListener('blur', clearPress);
+    this.drag = null;
+    this.dragMoveTimer = null;
+    this.pendingDragMove = null;
+    this.lastDragMove = 0;
+    this.suppressClickUntil = 0;
+    this.lastDownAt = 0;
+    this.lastDownX = 0;
+    this.lastDownY = 0;
+    this.lastDownButton = -1;
+    this.lastDownCount = 0;
+    window.addEventListener('pointerup', event => this.finishDrag(event, false));
+    window.addEventListener('pointercancel', event => this.finishDrag(event, true));
+    window.addEventListener('blur', () => this.finishDrag(null, true));
     surface.addEventListener('pointerdown', event => {
       if (!this.enabled || event.button !== 0) return;
       const target = this.replay?.hit(event.clientX, event.clientY);
       this.replay?.press?.(target?.node || null);
+      const now = performance.now();
+      const sameSpot = event.button === this.lastDownButton
+        && now - this.lastDownAt <= 500
+        && Math.hypot(event.clientX - this.lastDownX, event.clientY - this.lastDownY) <= 8;
+      const clickCount = sameSpot ? Math.min(3, this.lastDownCount + 1) : 1;
+      this.lastDownAt = now;
+      this.lastDownX = event.clientX;
+      this.lastDownY = event.clientY;
+      this.lastDownButton = event.button;
+      this.lastDownCount = clickCount;
+      this.drag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startTarget: target,
+        lastTarget: target,
+        dragged: false,
+        clickCount,
+      };
+    });
+    surface.addEventListener('mousedown', event => {
+      if (!this.enabled || event.button !== 0 || !this.drag || this.drag.dragged) return;
+      if (event.detail >= 1) this.drag.clickCount = Math.min(3, event.detail);
     });
     surface.addEventListener('click', event => {
       this.replay?.press?.(null);
+      if (performance.now() < this.suppressClickUntil) {
+        this.suppressClickUntil = 0;
+        event.preventDefault();
+        return;
+      }
       if (!this.enabled) { event.preventDefault(); this.blocked(); return; }
       this.pointer(event);
     });
     surface.addEventListener('contextmenu', event => { event.preventDefault(); this.pointer(event, 'right'); });
     surface.addEventListener('pointermove', event => {
+      if (this.drag && this.enabled && event.pointerId === this.drag.pointerId) {
+        if (!this.drag.dragged) {
+          if (Math.hypot(event.clientX - this.drag.startX, event.clientY - this.drag.startY) < 5) return;
+          if (!this.drag.startTarget) return;
+          this.drag.dragged = true;
+          this.replay?.press?.(null);
+          try { this.surface.setPointerCapture(this.drag.pointerId); } catch {}
+          if (this.drag.startTarget.nodeId !== this.target?.nodeId) this.hideEditor();
+          this.target = this.drag.startTarget;
+          this.command('mousedown', this.drag.startTarget, { button: 'left', clickCount: this.drag.clickCount });
+        }
+        const moveTarget = this.resolveDragTarget(event.clientX, event.clientY, this.drag.lastTarget);
+        if (moveTarget) {
+          this.drag.lastTarget = moveTarget;
+          this.queueDragMove(moveTarget);
+        }
+        return;
+      }
       const now = Date.now();
       if (now - this.lastHover < 28) return;
       this.lastHover = now;
@@ -131,9 +187,68 @@ export class RemoteControl {
     });
   }
 
+  clearDragMove() {
+    clearTimeout(this.dragMoveTimer);
+    this.dragMoveTimer = null;
+    this.pendingDragMove = null;
+  }
+
+  resolveDragTarget(clientX, clientY, fallback) {
+    const hit = this.replay?.hit(clientX, clientY, { clamp: true });
+    if (hit) return hit;
+    const vp = this.replay?.viewportPoint?.(clientX, clientY);
+    if (vp && fallback) return { ...fallback, ...vp };
+    return fallback || null;
+  }
+
+  queueDragMove(target) {
+    const now = performance.now();
+    if (!this.dragMoveTimer && now - this.lastDragMove >= 24) {
+      this.lastDragMove = now;
+      this.pendingDragMove = null;
+      this.command('move', target, { dragging: true });
+      return;
+    }
+    this.pendingDragMove = target;
+    if (!this.dragMoveTimer) {
+      const wait = Math.max(4, Math.round(24 - (now - this.lastDragMove)));
+      this.dragMoveTimer = setTimeout(() => {
+        this.dragMoveTimer = null;
+        const item = this.pendingDragMove;
+        this.pendingDragMove = null;
+        if (item && this.drag?.dragged && this.enabled) {
+          this.lastDragMove = performance.now();
+          this.command('move', item, { dragging: true });
+        }
+      }, wait);
+    }
+  }
+
+  finishDrag(event = null, canceled = false) {
+    this.replay?.press?.(null);
+    if (!this.drag) return;
+    if (event?.pointerId !== undefined && this.drag.pointerId !== event.pointerId) return;
+    const drag = this.drag;
+    this.drag = null;
+    this.clearDragMove();
+    if (!drag.dragged) return;
+    try { this.surface.releasePointerCapture(drag.pointerId); } catch {}
+    const endTarget = (!canceled && event)
+      ? this.resolveDragTarget(event.clientX, event.clientY, drag.lastTarget)
+      : drag.lastTarget;
+    if (endTarget && this.enabled) {
+      this.command('mouseup', endTarget, { button: 'left', clickCount: drag.clickCount });
+    }
+    this.suppressClickUntil = performance.now() + 300;
+    if (this.editor.hidden && this.select.hidden) this.surface.focus({ preventScroll: true });
+  }
+
   bind(replay) {
     if (this.replay === replay) return;
     this.replay?.press?.(null);
+    this.drag = null;
+    this.clearDragMove();
+    this.suppressClickUntil = 0;
     clearTimeout(this.wheelTimer);
     this.wheelTimer = null;
     this.pendingWheel = null;
@@ -154,7 +269,14 @@ export class RemoteControl {
     this.surface.hidden = !this.available;
     this.surface.dataset.mode = enabled ? 'control' : 'readonly';
     this.surface.setAttribute('aria-hidden', String(!this.available));
-    if (!enabled) { this.replay?.press?.(null); this.target = null; this.surface.style.cursor = ''; this.hideEditor(); }
+    if (!enabled) {
+      this.replay?.press?.(null);
+      this.drag = null;
+      this.clearDragMove();
+      this.target = null;
+      this.surface.style.cursor = '';
+      this.hideEditor();
+    }
   }
 
   flushWheel() {
@@ -180,7 +302,9 @@ export class RemoteControl {
       documentId: this.replay.documentId,
       ...extra,
     };
-    if (action === 'wheel' && Number.isFinite(viewportX) && Number.isFinite(viewportY)) {
+    const wantsViewport = action === 'wheel' || action === 'mousedown' || action === 'mouseup'
+      || (action === 'move' && extra.dragging === true);
+    if (wantsViewport && Number.isFinite(viewportX) && Number.isFinite(viewportY)) {
       payload.viewportX = viewportX;
       payload.viewportY = viewportY;
     }
@@ -194,13 +318,27 @@ export class RemoteControl {
     if (!target) { this.notify('这部分没有可操作的 rrweb 节点（例如跨域 iframe）。'); return; }
     if (target.nodeId !== this.target?.nodeId) this.hideEditor();
     this.target = target;
+    const clickCount = Math.max(1, Math.min(3, event.detail || 1));
     if (button === 'left') this.replay.optimisticToggle?.(target.node);
-    this.command('click', target, { button, clickCount: Math.min(2, event.detail || 1) });
-    this.surface.focus({ preventScroll: true });
+    this.command('click', target, { button, clickCount });
     // The remote focus event selects the final field after React/label handlers.
     // Optimistically open the IME-capable local editor for ordinary fields.
     this.focus(target.nodeId, false);
+    if (this.editor.hidden && this.select.hidden) {
+      this.surface.focus({ preventScroll: true });
+    } else if (button === 'left' && clickCount === 3 && !this.editor.hidden && !this.incremental && !this.password && this.target?.nodeId === target.nodeId) {
+      try { this.editor.setSelectionRange(0, this.editor.value.length); } catch {}
+    }
     this.localFocusUntil = !this.editor.hidden ? performance.now() + 300 : 0;
+  }
+
+  syncInputSelection({ id, start, end } = {}) {
+    if (!this.enabled || this.editor.hidden || this.incremental || this.password) return;
+    if (this.target?.nodeId !== id) return;
+    const max = this.editor.value.length;
+    const s = Math.max(0, Math.min(max, Number.isInteger(start) ? start : 0));
+    const e = Math.max(s, Math.min(max, Number.isInteger(end) ? end : s));
+    try { this.editor.setSelectionRange(s, e); } catch {}
   }
 
   focus(id, fromRemote = true) {
@@ -372,8 +510,30 @@ export class RemoteControl {
       selectionStart: this.editor.selectionStart, selectionEnd: this.editor.selectionEnd });
   }
 
+  forwardKey(event) {
+    if (!this.enabled || !this.target) return;
+    const modifiers = [];
+    if (event.ctrlKey) modifiers.push('Control');
+    if (event.metaKey) modifiers.push('Meta');
+    if (event.altKey) modifiers.push('Alt');
+    if (event.shiftKey) modifiers.push('Shift');
+    this.command('key', this.target, { key: event.key === ' ' ? 'Space' : event.key, modifiers });
+  }
+
   key(event, inEditor = false) {
-    if (!this.enabled || !this.target || event.isComposing) return;
+    if (!this.enabled || event.isComposing) return;
+    const isCopy = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c';
+    if (isCopy) {
+      if (inEditor && !this.incremental) return;
+      if (this.onCopy) {
+        event.preventDefault();
+        const localText = this.replay?.getSelectedText?.() || '';
+        const keySpec = { ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey, key: event.key };
+        this.onCopy({ localText, fallback: this.target ? () => this.forwardKey(keySpec) : null });
+        return;
+      }
+    }
+    if (!this.target) return;
     const modified = event.ctrlKey || event.metaKey || event.altKey;
     if (inEditor && !this.incremental && (event.ctrlKey || event.metaKey) && /^[acvxyz]$/i.test(event.key)) return;
     if (inEditor && this.incremental && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') return;
@@ -383,14 +543,7 @@ export class RemoteControl {
     if (inEditor && !this.incremental && ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) && !modified) return;
     event.preventDefault();
     if (!modified && event.key.length === 1) this.command('text', this.target, { value: event.key });
-    else {
-      const modifiers = [];
-      if (event.ctrlKey) modifiers.push('Control');
-      if (event.metaKey) modifiers.push('Meta');
-      if (event.altKey) modifiers.push('Alt');
-      if (event.shiftKey) modifiers.push('Shift');
-      this.command('key', this.target, { key: event.key === ' ' ? 'Space' : event.key, modifiers });
-    }
+    else this.forwardKey(event);
     if (this.password && ['Backspace', 'Delete'].includes(event.key)) {
       this.editor.value = this.editor.value.slice(0, -1);
       this.previousValue = this.editor.value;

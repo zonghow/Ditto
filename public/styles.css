@@ -1178,7 +1178,7 @@ pre { white-space: pre-wrap; margin: 8px 0 0; padding: 10px; background: var(--c
 .replayer-wrapper { position: relative; }
 .replayer-wrapper iframe { border: 0; }
 .replayer-mouse, .replayer-mouse-tail { display: none !important; }
-#control-surface { position: absolute; inset: 0; z-index: 3; cursor: default; outline: none; touch-action: none; }
+#control-surface { position: absolute; inset: 0; z-index: 3; cursor: default; outline: none; touch-action: none; user-select: none; -webkit-user-select: none; }
 #control-surface[data-mode=readonly] { cursor: default; }
 #control-surface:focus-visible { box-shadow: inset 0 0 0 2px var(--blue); }
 #remote-editor {
@@ -1187,7 +1187,7 @@ pre { white-space: pre-wrap; margin: 8px 0 0; padding: 10px; background: var(--c
   pointer-events: none; overflow: hidden; box-sizing: border-box;
 }
 #remote-editor::selection {
-  background: rgba(107, 149, 255, .28);
+  background: rgba(107, 149, 255, .36);
 }
 #remote-editor.is-composing {
   background: var(--editor-bg, #ffffff);

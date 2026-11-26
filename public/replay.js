@@ -158,6 +158,15 @@ canvas[data-ditto-canvas="fill"] > img[data-ditto-canvas-img] {
 }
 canvas[data-ditto-canvas] > :not(img[data-ditto-canvas-img]) {
   display: none !important;
+}
+::highlight(ditto-selection) {
+  background-color: rgba(107, 149, 255, 0.36);
+  color: inherit;
+}`;
+
+const SELECTION_SUPPRESS_CSS = `
+::selection {
+  background-color: transparent !important;
 }`;
 
 function ensureReplayMediaStyles(doc) {
@@ -175,7 +184,8 @@ function ensureReplayMediaStyles(doc) {
   try {
     const style = doc.createElement('style');
     style.setAttribute('data-ditto-media', '1');
-    style.textContent = VIDEO_SHIM_CSS;
+    const hasCustomHighlight = Boolean(doc.defaultView?.CSS?.highlights && doc.defaultView?.Highlight);
+    style.textContent = hasCustomHighlight ? `${VIDEO_SHIM_CSS}${SELECTION_SUPPRESS_CSS}` : VIDEO_SHIM_CSS;
     (doc.head || doc.documentElement)?.appendChild(style);
   } catch { /* ignore */ }
 }
@@ -196,6 +206,7 @@ export class LiveReplay {
     ready = () => {},
     cast = () => {},
     focus = () => {},
+    inputSelection = () => {},
     crossOriginFrame = () => {},
     hasInFlightWheels = () => false,
     hasPendingControls = () => false,
@@ -205,6 +216,7 @@ export class LiveReplay {
     this.thumbnail = thumbnail;
     this.cast = cast;
     this.focus = focus;
+    this.inputSelection = inputSelection;
     this.ready = ready;
     this.crossOriginFrame = crossOriginFrame;
     this.hasInFlightWheels = hasInFlightWheels;
@@ -213,6 +225,7 @@ export class LiveReplay {
     this.videoFrames = new Map();
     this.optimisticScrolls = new Map();
     this.optimisticInputs = new Map();
+    this.selectionDocs = new Set();
     this.hoveredNodes = [];
     this.activeNodes = [];
     this.lastHoveredNode = null;
@@ -240,6 +253,7 @@ export class LiveReplay {
     this.videoFrames.clear();
     this.clearOptimisticScrolls();
     this.clearOptimisticInputs();
+    this.clearSelection();
     this.hoveredNodes = [];
     this.activeNodes = [];
     this.lastHoveredNode = null;
@@ -285,6 +299,7 @@ export class LiveReplay {
       this.activeNodes = [];
       this.lastHoveredNode = null;
       this.clearOptimisticInputs();
+      this.clearSelection();
       this.fit();
       adaptDocumentHoverStyles(this.player.iframe.contentDocument);
       for (const frame of this.canvasFrames.values()) this.paintCanvas(frame);
@@ -298,6 +313,9 @@ export class LiveReplay {
         this.activeNodeId = event.data.payload.id;
         this.focus(this.activeNodeId, this);
       }
+      if (event.type === 5 && event.data?.tag === 'ditto-input-selection') {
+        this.inputSelection(event.data.payload, this);
+      }
       if (event.type === 5 && event.data?.tag === 'ditto-canvas') {
         this.paintCanvas(event.data.payload);
       }
@@ -306,6 +324,9 @@ export class LiveReplay {
       }
       if (event.type === 5 && event.data?.tag === 'ditto-xorigin') {
         this.reportCrossOrigin(event.data.payload);
+      }
+      if (event.type === 3 && event.data?.source === 14) {
+        this.applyRemoteSelection(event.data);
       }
       if (event.type === 3 && event.data?.source === 0) {
         if (Array.isArray(event.data.adds)) {
@@ -827,6 +848,82 @@ export class LiveReplay {
     return true;
   }
 
+  collectReplayDocs() {
+    const docs = [];
+    const topDoc = this.player?.iframe?.contentDocument;
+    if (!topDoc) return docs;
+    docs.push(topDoc);
+    for (let i = 0; i < docs.length && docs.length < 8; i++) {
+      let frames;
+      try { frames = docs[i].querySelectorAll('iframe'); } catch { continue; }
+      for (const frame of frames) {
+        try { if (frame.contentDocument) docs.push(frame.contentDocument); } catch { /* ignore */ }
+      }
+    }
+    return docs;
+  }
+
+  clearSelection() {
+    const docs = new Set(this.selectionDocs);
+    for (const doc of this.collectReplayDocs()) docs.add(doc);
+    for (const doc of docs) {
+      try { doc.defaultView?.CSS?.highlights?.delete?.('ditto-selection'); } catch { /* ignore */ }
+      try { doc.getSelection?.()?.removeAllRanges?.(); } catch { /* ignore */ }
+    }
+    this.selectionDocs.clear();
+  }
+
+  applyRemoteSelection(data) {
+    if (this.thumbnail) return;
+    this.clearSelection();
+    if (!data || !Array.isArray(data.ranges) || !data.ranges.length) return;
+    const clampOffset = (node, offset) => {
+      const max = node.nodeType === 3 ? (node.length || 0) : (node.childNodes?.length || 0);
+      return Math.max(0, Math.min(max, Number.isInteger(offset) ? offset : 0));
+    };
+    const highlightsByDoc = new Map();
+    for (const item of data.ranges) {
+      if (!item || typeof item !== 'object') continue;
+      const startNode = this.node(item.start);
+      const endNode = this.node(item.end);
+      if (!startNode || !endNode) continue;
+      const doc = startNode.ownerDocument;
+      if (!doc || doc !== endNode.ownerDocument) continue;
+      try {
+        const range = doc.createRange();
+        range.setStart(startNode, clampOffset(startNode, item.startOffset));
+        range.setEnd(endNode, clampOffset(endNode, item.endOffset));
+        const selection = doc.getSelection?.();
+        if (selection) selection.addRange(range);
+        this.selectionDocs.add(doc);
+        if (!range.collapsed) {
+          let list = highlightsByDoc.get(doc);
+          if (!list) { list = []; highlightsByDoc.set(doc, list); }
+          list.push(range);
+        }
+      } catch { /* ignore stale or cross-tree range */ }
+    }
+    for (const [doc, ranges] of highlightsByDoc) {
+      ensureReplayMediaStyles(doc);
+      try {
+        const win = doc.defaultView;
+        if (win?.CSS?.highlights && win?.Highlight) {
+          win.CSS.highlights.set('ditto-selection', new win.Highlight(...ranges));
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  getSelectedText() {
+    for (const doc of this.collectReplayDocs()) {
+      try {
+        const text = String(doc.getSelection?.()?.toString() || '');
+        if (text) return text.slice(0, 32768);
+      } catch { /* ignore */ }
+    }
+    return '';
+  }
+
   add(message) {
     if (message.documentId !== this.documentId || message.firstSequence !== this.sequence + 1) return false;
     this.sequence = message.lastSequence;
@@ -835,6 +932,10 @@ export class LiveReplay {
       if (this.isReady && event.type === 5 && event.data?.tag === 'ditto-focus') {
         this.activeNodeId = event.data.payload.id;
         this.focus(this.activeNodeId, this);
+        continue;
+      }
+      if (this.isReady && event.type === 5 && event.data?.tag === 'ditto-input-selection') {
+        this.inputSelection(event.data.payload, this);
         continue;
       }
       if (this.isReady && event.type === 5 && event.data?.tag === 'ditto-video') {
@@ -851,6 +952,11 @@ export class LiveReplay {
       }
       if (this.isReady && event.type === 3 && event.data?.source === 3) {
         this.applyRemoteScroll(event.data);
+        this.cast(event, this);
+        continue;
+      }
+      if (this.isReady && !sawMutation && event.type === 3 && event.data?.source === 14) {
+        this.applyRemoteSelection(event.data);
         this.cast(event, this);
         continue;
       }
@@ -953,9 +1059,19 @@ export class LiveReplay {
     return { nodeId, framePath };
   }
 
+  viewportPoint(clientX, clientY) {
+    const iframe = this.player?.iframe;
+    const box = iframe?.getBoundingClientRect();
+    if (!box?.width || !box?.height) return null;
+    return {
+      viewportX: Math.min(1, Math.max(0, (clientX - box.left) / box.width)),
+      viewportY: Math.min(1, Math.max(0, (clientY - box.top) / box.height)),
+    };
+  }
+
   // Hit testing stays in inert replay DOM. Coordinates sent back are relative
   // to a recorded node, not an arbitrary page point from a stale document.
-  hit(clientX, clientY) {
+  hit(clientX, clientY, { clamp = false } = {}) {
     const iframe = this.player.iframe;
     const box = iframe.getBoundingClientRect();
     if (!box.width || !box.height) return null;
@@ -963,7 +1079,10 @@ export class LiveReplay {
     const viewportY = Math.min(1, Math.max(0, (clientY - box.top) / box.height));
     let x = (clientX - box.left) * this.width / box.width;
     let y = (clientY - box.top) * this.height / box.height;
-    if (x < 0 || y < 0 || x >= this.width || y >= this.height) return null;
+    if (clamp) {
+      x = Math.min(Math.max(0, this.width - 1), Math.max(0, x));
+      y = Math.min(Math.max(0, this.height - 1), Math.max(0, y));
+    } else if (x < 0 || y < 0 || x >= this.width || y >= this.height) return null;
     let doc = iframe.contentDocument;
     let node;
     for (let depth = 0; doc && depth < 12; depth++) {
@@ -1072,6 +1191,7 @@ export class LiveReplay {
     this.isReady = false;
     this.clearOptimisticScrolls();
     this.clearOptimisticInputs();
+    this.clearSelection();
     this.activeNodes = [];
     clearTimeout(this.xoriginTimer);
     this.xoriginTimer = null;

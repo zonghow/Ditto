@@ -34,6 +34,70 @@ test('control schema validates document/node identities, finite points, text and
   ]) assert.throws(() => validateControl(input));
   assert.equal(validateControl({ ...command, action: 'key', key: 'Enter', modifiers: [] }).key, 'Enter');
   assert.equal(validateControl({ ...command, action: 'input', value: '中文', selectionStart: 2, selectionEnd: 2 }).value, '中文');
+  assert.equal(validateControl({ ...command, action: 'click', clickCount: 3 }).clickCount, 3);
+  assert.throws(() => validateControl({ ...command, action: 'click', clickCount: 4 }));
+  assert.deepEqual(validateControl({ ...command, action: 'mousedown', button: 'left', clickCount: 2, viewportX: 0.2, viewportY: 0.3 }), {
+    action: 'mousedown', tabId: 'tab', documentId: 'doc', nodeId: 3, framePath: [],
+    offsetX: 0.5, offsetY: 0.5, viewportX: 0.2, viewportY: 0.3, button: 'left', clickCount: 2,
+  });
+  assert.equal(validateControl({ ...command, action: 'move', dragging: true, viewportX: 0.6, viewportY: 0.4 }).dragging, true);
+  assert.equal(validateControl({ ...command, action: 'mouseup', button: 'left', viewportX: 0.6, viewportY: 0.4 }).action, 'mouseup');
+});
+
+test('triple-click and drag-select dispatch cleanly with coalesced drag moves', async () => {
+  const browser = new BrowserService({ viewport: { width: 1000, height: 800 } });
+  browser.ready = true;
+  const events = [];
+  let releaseFirst;
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  browser.tabs.set('tab', {
+    id: 'tab',
+    documentId: 'doc',
+    hidden: false,
+    crashed: false,
+    dialog: null,
+    recordingStatus: 'live',
+    page: {
+      isClosed: () => false,
+      viewportSize: () => ({ width: 1000, height: 800 }),
+      bringToFront: async () => {},
+      evaluate: async () => ({ ok: true, x: 100, y: 200 }),
+      mouse: {
+        click: async (x, y, opts) => { events.push({ type: 'click', x, y, ...opts }); },
+        move: async (x, y) => {
+          events.push({ type: 'move', x: Math.round(x), y: Math.round(y) });
+          if (events.length === 1) await firstGate;
+        },
+        down: async opts => { events.push({ type: 'down', ...opts }); },
+        up: async opts => { events.push({ type: 'up', ...opts }); },
+      },
+    },
+  });
+
+  // Drag sequence: mousedown -> coalesced drag moves -> mouseup
+  const pDown = browser.performControl('v1', { ...command, action: 'mousedown', button: 'left', clickCount: 1, viewportX: 0.1, viewportY: 0.25 });
+  await Promise.resolve();
+  const pMove1 = browser.performControl('v1', { ...command, action: 'move', dragging: true, viewportX: 0.2, viewportY: 0.25 });
+  const pMove2 = browser.performControl('v1', { ...command, action: 'move', dragging: true, viewportX: 0.5, viewportY: 0.25 });
+  const pUp = browser.performControl('v1', { ...command, action: 'mouseup', button: 'left', clickCount: 1, viewportX: 0.6, viewportY: 0.25 });
+  releaseFirst();
+  await Promise.all([pDown, pMove1, pMove2, pUp]);
+  assert.deepEqual(events, [
+    { type: 'move', x: 100, y: 200 },
+    { type: 'down', button: 'left', clickCount: 1 },
+    { type: 'move', x: 500, y: 200 },
+    { type: 'move', x: 600, y: 200 },
+    { type: 'up', button: 'left', clickCount: 1 },
+  ]);
+
+  // Triple click dispatches a single down/up with clickCount: 3 (not 3 duplicate clicks)
+  events.length = 0;
+  await browser.performControl('v1', { ...command, action: 'click', button: 'left', clickCount: 3 });
+  assert.deepEqual(events, [
+    { type: 'move', x: 100, y: 200 },
+    { type: 'down', button: 'left', clickCount: 3 },
+    { type: 'up', button: 'left', clickCount: 3 },
+  ]);
 });
 
 test('hover events do not backlog ahead of clicks on a busy remote page', async () => {

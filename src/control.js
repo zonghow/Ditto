@@ -2,7 +2,7 @@ import { InputError } from './snapshot.js';
 
 const KEYS = new Set(['Enter', 'Tab', 'Backspace', 'Delete', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Space']);
 const MODIFIERS = new Set(['Control', 'Meta', 'Alt', 'Shift']);
-const TYPES = new Set(['click', 'move', 'wheel', 'text', 'key', 'input', 'select']);
+const TYPES = new Set(['click', 'mousedown', 'mouseup', 'move', 'wheel', 'text', 'key', 'input', 'select']);
 
 export function validateControl(input) {
   if (!input || typeof input !== 'object' || !TYPES.has(input.action)) throw new InputError('不支持的远端操作。');
@@ -10,27 +10,38 @@ export function validateControl(input) {
   if (!Number.isInteger(input.nodeId) || input.nodeId < 1 || input.nodeId >= 1_000_000_000) throw new InputError('缺少有效的网页节点。');
   if (!Array.isArray(input.framePath) || input.framePath.length > 12 || input.framePath.some(id => !Number.isInteger(id) || id < 1 || id >= 1_000_000_000)) throw new InputError('网页 frame 路径无效。');
   const clean = { action: input.action, tabId: input.tabId, documentId: input.documentId, nodeId: input.nodeId, framePath: input.framePath };
-  if (['click', 'move', 'wheel'].includes(input.action)) {
+  if (['click', 'mousedown', 'mouseup', 'move', 'wheel'].includes(input.action)) {
     if (![input.offsetX, input.offsetY].every(value => Number.isFinite(value) && value >= 0 && value <= 1)) throw new InputError('操作位置无效。');
     clean.offsetX = input.offsetX;
     clean.offsetY = input.offsetY;
   }
+  if (['mousedown', 'mouseup', 'move', 'wheel'].includes(input.action) && (input.viewportX !== undefined || input.viewportY !== undefined)) {
+    if (![input.viewportX, input.viewportY].every(value => Number.isFinite(value) && value >= 0 && value <= 1)) {
+      throw new InputError('操作位置无效。');
+    }
+    clean.viewportX = input.viewportX;
+    clean.viewportY = input.viewportY;
+  }
+  if (input.action === 'move' && input.dragging === true) {
+    clean.dragging = true;
+  }
   if (input.action === 'click') {
     clean.button = input.button ?? 'left';
     clean.clickCount = input.clickCount ?? 1;
-    if (!['left', 'middle', 'right'].includes(clean.button) || ![1, 2].includes(clean.clickCount)) throw new InputError('鼠标操作无效。');
+    if (!['left', 'middle', 'right'].includes(clean.button) || ![1, 2, 3].includes(clean.clickCount)) throw new InputError('鼠标操作无效。');
+  }
+  if (input.action === 'mousedown' || input.action === 'mouseup') {
+    clean.button = input.button ?? 'left';
+    if (!['left', 'middle', 'right'].includes(clean.button)) throw new InputError('鼠标操作无效。');
+    if (input.clickCount !== undefined) {
+      if (![1, 2, 3].includes(input.clickCount)) throw new InputError('鼠标操作无效。');
+      clean.clickCount = input.clickCount;
+    }
   }
   if (input.action === 'wheel') {
     if (![input.deltaX, input.deltaY].every(value => Number.isFinite(value) && Math.abs(value) <= 4000)) throw new InputError('滚动量无效。');
     clean.deltaX = input.deltaX;
     clean.deltaY = input.deltaY;
-    if (input.viewportX !== undefined || input.viewportY !== undefined) {
-      if (![input.viewportX, input.viewportY].every(value => Number.isFinite(value) && value >= 0 && value <= 1)) {
-        throw new InputError('操作位置无效。');
-      }
-      clean.viewportX = input.viewportX;
-      clean.viewportY = input.viewportY;
-    }
   }
   if (['text', 'input', 'select'].includes(input.action)) {
     if (typeof input.value !== 'string' || input.value.length > 16384) throw new InputError('输入过长或格式无效。');

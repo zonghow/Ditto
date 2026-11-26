@@ -145,6 +145,7 @@ const addressBar = createAddressBar({
 const screencastView = new ScreencastView({
   container: $('#screencast-stage'),
   canvas: $('#screencast-canvas'),
+  onCopy: opts => copyRemoteSelection(opts),
   send: data => {
     if (socket?.readyState === WebSocket.OPEN) {
       const requestId = ++controlRequestId;
@@ -159,6 +160,7 @@ const controller = new RemoteControl({
   editor: $('#remote-editor'),
   select: $('#remote-select'),
   notify: toast,
+  onCopy: opts => copyRemoteSelection(opts),
   blocked: () => {
     const tab = findTab(selected);
     if (state?.browser.importing) toast('正在同步登录态，请稍候。');
@@ -291,6 +293,7 @@ async function copyText(text) {
   if (navigator.clipboard?.writeText) {
     try { await navigator.clipboard.writeText(text); return; } catch { /* Fall back on plain HTTP origins. */ }
   }
+  const prevFocus = document.activeElement;
   const area = document.createElement('textarea');
   area.value = text;
   area.setAttribute('readonly', '');
@@ -300,7 +303,35 @@ async function copyText(text) {
   area.select();
   const ok = document.execCommand('copy');
   area.remove();
+  if (prevFocus && prevFocus !== document.body && prevFocus.isConnected) {
+    try { prevFocus.focus({ preventScroll: true }); } catch { /* ignore */ }
+  }
   if (!ok) throw new Error('浏览器拒绝自动复制，请直接复制页面显示的地址。');
+}
+
+async function copyRemoteSelection({ localText = '', fallback = null } = {}) {
+  if (localText) {
+    try {
+      await copyText(localText);
+      operation(`已复制 ${localText.length} 个字符到剪贴板`);
+    } catch (error) {
+      toast(error.message);
+    }
+    return;
+  }
+  const tabId = selected;
+  if (!tabId) { fallback?.(); return; }
+  try {
+    const { text } = await api(`/api/tabs/${encodeURIComponent(tabId)}/selection`, { method: 'POST' });
+    if (!text) {
+      fallback?.();
+      return;
+    }
+    await copyText(text);
+    operation(`已复制 ${text.length} 个字符到剪贴板`);
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 function sendWatch(resync = false, resyncTabId = null) {
@@ -549,6 +580,7 @@ function renderMain() {
   mainPlayer = new LiveReplay($('#main-replay'), recording, {
     ready: replay => { if (mainPlayer === replay) { controller.bind(replay); updateControl(); } },
     focus: (id, replay) => { if (mainPlayer === replay) controller.focus(id); },
+    inputSelection: (payload, replay) => { if (mainPlayer === replay) controller.syncInputSelection(payload); },
     crossOriginFrame: (info, replay) => handleCrossOriginFrame(info, replay),
     hasInFlightWheels: () => pendingWheelControls.size > 0,
     hasPendingControls: () => pendingControls.size > 0,

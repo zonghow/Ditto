@@ -207,6 +207,17 @@ export class RecordingSanitizer {
       if (data?.tag === 'ditto-focus' && Number.isInteger(data.payload?.id)) {
         return { ...event, data: { tag: data.tag, payload: { id: data.payload.id } } };
       }
+      if (data?.tag === 'ditto-input-selection' && Number.isInteger(data.payload?.id)
+        && Number.isInteger(data.payload?.start) && Number.isInteger(data.payload?.end)
+        && data.payload.start >= 0 && data.payload.end >= 0) {
+        return {
+          ...event,
+          data: {
+            tag: data.tag,
+            payload: { id: data.payload.id, start: data.payload.start, end: data.payload.end },
+          },
+        };
+      }
       if ((data?.tag === 'ditto-canvas' || data?.tag === 'ditto-video') && Number.isInteger(data.payload?.id) &&
         typeof data.payload?.dataUrl === 'string' && data.payload.dataUrl.length <= 1024 * 1024 &&
         /^data:image\/(?:webp|png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(data.payload.dataUrl)) {

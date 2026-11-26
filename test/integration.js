@@ -370,6 +370,91 @@ try {
     await replay().locator('#typed').filter({ hasText: 'Animated clicked' }).waitFor();
     await freshPage.evaluate(() => document.querySelector('#animated-button').remove());
     checks.push('on-screen animated buttons do not block real clicks behind Playwright stability/retry waits');
+    // Triple-click block selection, CSS.highlights rendering, clearing, drag-select, input triple-click, and Cmd/Ctrl+C local copy in rrweb mode
+    await freshPage.evaluate(() => {
+      const p = document.createElement('p');
+      p.id = 'copy-block';
+      p.style.cssText = 'position:fixed;left:220px;top:360px;margin:0;padding:8px 12px;background:#fff;font:20px/1.4 sans-serif;z-index:50;';
+      p.textContent = 'Alpha beta gamma delta epsilon zeta.';
+      document.body.append(p);
+      const blank = document.createElement('div');
+      blank.id = 'clear-sel-pad';
+      blank.style.cssText = 'position:fixed;left:220px;top:430px;width:120px;height:30px;background:#e2e8f0;z-index:50;';
+      document.body.append(blank);
+    });
+    await replay().locator('#copy-block').waitFor();
+    const copyBlockBox = await replay().locator('#copy-block').boundingBox();
+    assert.ok(copyBlockBox, 'Missing replay box for #copy-block');
+    await observer.mouse.click(copyBlockBox.x + 80, copyBlockBox.y + copyBlockBox.height / 2, { clickCount: 3 });
+    await freshPage.waitForFunction(() => window.getSelection()?.toString().trim() === 'Alpha beta gamma delta epsilon zeta.', { timeout: 4000 });
+    await observer.waitForFunction(() => {
+      const iframe = document.querySelector('#main-replay iframe');
+      const text = iframe?.contentDocument?.getSelection?.()?.toString().trim() || '';
+      const hlSize = iframe?.contentWindow?.CSS?.highlights?.get?.('ditto-selection')?.size || 0;
+      return text === 'Alpha beta gamma delta epsilon zeta.' && hlSize >= 1;
+    }, { timeout: 4000 });
+    // Intercept clipboard write / execCommand copy to verify Cmd/Ctrl+C copies the selected text directly
+    await observer.evaluate(() => {
+      window.__copiedByShortcut = '';
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText = async text => { window.__copiedByShortcut = text; };
+      }
+      const origExec = document.execCommand.bind(document);
+      document.execCommand = cmd => {
+        if (cmd === 'copy') {
+          const active = document.activeElement;
+          if (active && 'value' in active && active.value) window.__copiedByShortcut = active.value;
+          return true;
+        }
+        return origExec(cmd);
+      };
+    });
+    await observer.keyboard.press(process.platform === 'darwin' ? 'Meta+c' : 'Control+c');
+    await observer.waitForFunction(() => (window.__copiedByShortcut || '').trim() === 'Alpha beta gamma delta epsilon zeta.', { timeout: 3000 });
+    // Clicking blank area must clear BOTH remote selection AND replay highlight/selection
+    const clearPadBox = await replay().locator('#clear-sel-pad').boundingBox();
+    await observer.mouse.click(clearPadBox.x + 20, clearPadBox.y + 15);
+    await freshPage.waitForFunction(() => window.getSelection()?.toString().trim() === '', { timeout: 4000 });
+    await observer.waitForFunction(() => {
+      const iframe = document.querySelector('#main-replay iframe');
+      const text = iframe?.contentDocument?.getSelection?.()?.toString().trim() || '';
+      const hlSize = iframe?.contentWindow?.CSS?.highlights?.get?.('ditto-selection')?.size || 0;
+      return text === '' && hlSize === 0;
+    }, { timeout: 4000 });
+    // Drag-to-select across #copy-block selects a partial range and keeps it after mouseup
+    await observer.mouse.move(copyBlockBox.x + 12, copyBlockBox.y + copyBlockBox.height / 2);
+    await observer.mouse.down();
+    await observer.mouse.move(copyBlockBox.x + 150, copyBlockBox.y + copyBlockBox.height / 2, { steps: 6 });
+    await observer.mouse.up();
+    await freshPage.waitForFunction(() => {
+      const s = window.getSelection()?.toString().trim() || '';
+      return s.length >= 4 && s.startsWith('Alpha');
+    }, { timeout: 4000 });
+    await observer.waitForFunction(() => {
+      const iframe = document.querySelector('#main-replay iframe');
+      const s = iframe?.contentDocument?.getSelection?.()?.toString().trim() || '';
+      const hlSize = iframe?.contentWindow?.CSS?.highlights?.get?.('ditto-selection')?.size || 0;
+      return s.length >= 4 && s.startsWith('Alpha') && hlSize >= 1;
+    }, { timeout: 4000 });
+    // Triple-clicking inside an <input> selects all text on remote AND in #remote-editor
+    await freshPage.evaluate(() => { document.querySelector('#text').value = 'alpha beta gamma'; });
+    await observer.waitForFunction(() => document.querySelector('#main-replay iframe')?.contentDocument?.querySelector('#text')?.value === 'alpha beta gamma');
+    const inputTripleBox = await replay().locator('#text').boundingBox();
+    await observer.mouse.click(inputTripleBox.x + 40, inputTripleBox.y + inputTripleBox.height / 2, { clickCount: 3 });
+    await freshPage.waitForFunction(() => {
+      const el = document.querySelector('#text');
+      return el.selectionStart === 0 && el.selectionEnd === 'alpha beta gamma'.length;
+    }, { timeout: 4000 });
+    await observer.waitForFunction(() => {
+      const ed = document.querySelector('#remote-editor');
+      return !ed.hidden && ed.selectionStart === 0 && ed.selectionEnd === 'alpha beta gamma'.length;
+    }, { timeout: 4000 });
+    await observer.locator('#remote-editor').press('Escape');
+    await freshPage.evaluate(() => {
+      document.querySelector('#copy-block')?.remove();
+      document.querySelector('#clear-sel-pad')?.remove();
+    });
+    checks.push('rrweb mode supports triple-click block selection, drag-to-select, CSS.highlights visibility/clearing, input selection sync, and Cmd/Ctrl+C local clipboard copy');
     await freshPage.evaluate(() => {
       const frame = document.createElement('iframe');
       frame.id = 'same-frame';
@@ -740,6 +825,44 @@ try {
     const scHit = await observedTab.page.evaluate(() => window.__scHit);
     assert.ok(Math.abs(scHit.x - 612) <= 4 && Math.abs(scHit.y - 392) <= 4,
       `Screencast mouse hit misaligned: got (${scHit.x}, ${scHit.y}), expected ~(612, 392)`);
+    // Screencast triple-click selects entire block and Cmd/Ctrl+C copies it to local clipboard
+    await observedTab.page.evaluate(() => {
+      document.getElementById('ditto-sc-marker')?.remove();
+      const p = document.createElement('p');
+      p.id = 'sc-copy-block';
+      p.style.cssText = 'position:fixed;left:420px;top:360px;margin:0;padding:8px 12px;background:#fff;color:#000;font:20px/1.4 sans-serif;z-index:2147483647;';
+      p.textContent = 'Screencast triple click block text.';
+      document.body.append(p);
+    });
+    const remoteVp = observedTab.page.viewportSize();
+    const scClickPt = await observer.evaluate(vp => {
+      const c = document.getElementById('screencast-canvas');
+      const rect = c.getBoundingClientRect();
+      return {
+        x: rect.left + (490 / vp.width) * rect.width,
+        y: rect.top + (382 / vp.height) * rect.height,
+      };
+    }, remoteVp);
+    await observer.mouse.click(scClickPt.x, scClickPt.y, { clickCount: 3 });
+    await observedTab.page.waitForFunction(() => window.getSelection()?.toString().trim() === 'Screencast triple click block text.', null, { timeout: 4000 });
+    await observer.evaluate(() => {
+      window.__copiedByShortcut = '';
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText = async text => { window.__copiedByShortcut = text; };
+      }
+      const origExec = document.execCommand.bind(document);
+      document.execCommand = cmd => {
+        if (cmd === 'copy') {
+          const active = document.activeElement;
+          if (active && 'value' in active && active.value) window.__copiedByShortcut = active.value;
+          return true;
+        }
+        return origExec(cmd);
+      };
+    });
+    await observer.keyboard.press(process.platform === 'darwin' ? 'Meta+c' : 'Control+c');
+    await observer.waitForFunction(() => (window.__copiedByShortcut || '').trim() === 'Screencast triple click block text.', null, { timeout: 4000 });
+    await observedTab.page.evaluate(() => document.getElementById('sc-copy-block')?.remove());
     await observer.locator('#drawer-toggle').click();
     await observer.locator('#control-drawer.open').waitFor({ state: 'visible' });
     await observer.locator('label.drawer-switch:has(#screencast-toggle)').click();

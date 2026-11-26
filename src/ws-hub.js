@@ -245,10 +245,11 @@ export function createWsHub({
         if (Array.isArray(incomingJsons)) attachPreSerialized(batch, [...incomingJsons]);
         pendingEvents.set(data.tabId, batch);
       }
-      // Flush interactive frames (scroll, input, mouse interaction, or any DOM
+      // Flush interactive frames (scroll, input, selection, mouse interaction, or any DOM
       // mutation within 500ms of a user control command) immediately instead of
       // adding a 16ms batching stall.
-      const hasInteractiveEvent = data.events?.some(e => e.type === 3 && (e.data?.source === 3 || e.data?.source === 5 || e.data?.source === 2));
+      const hasInteractiveEvent = data.events?.some(e => (e.type === 3 && (e.data?.source === 3 || e.data?.source === 5 || e.data?.source === 2 || e.data?.source === 14))
+        || (e.type === 5 && e.data?.tag === 'ditto-input-selection'));
       const recentlyControlled = (Date.now() - (lastControlAtByTab.get(data.tabId) || 0)) < 500;
       if (hasInteractiveEvent || recentlyControlled) flushEvents();
       else eventTimer ||= setTimeout(flushEvents, 16);

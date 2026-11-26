@@ -174,6 +174,11 @@ test('validateScreencastInput accepts drag/scroll/text/key and blocks browser sh
   assert.deepEqual(validateScreencastInput({ tabId: 't1', action: 'mousedown', x: 0.25, y: 0.5 }), {
     action: 'mousedown', tabId: 't1', x: 0.25, y: 0.5, button: 'left',
   });
+  assert.deepEqual(validateScreencastInput({ tabId: 't1', action: 'mousedown', x: 0.25, y: 0.5, clickCount: 3 }), {
+    action: 'mousedown', tabId: 't1', x: 0.25, y: 0.5, button: 'left', clickCount: 3,
+  });
+  assert.equal(validateScreencastInput({ tabId: 't1', action: 'click', x: 0.25, y: 0.5, clickCount: 3 }).clickCount, 3);
+  assert.throws(() => validateScreencastInput({ tabId: 't1', action: 'mousedown', x: 0.25, y: 0.5, clickCount: 4 }));
   assert.deepEqual(validateScreencastInput({ tabId: 't1', action: 'mousemove', x: 0.8, y: 0.5 }), {
     action: 'mousemove', tabId: 't1', x: 0.8, y: 0.5,
   });

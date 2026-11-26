@@ -81,7 +81,11 @@ export function validateScreencastInput(input) {
   }
   if (input.action === 'click') {
     clean.clickCount = input.clickCount ?? 1;
-    if (![1, 2].includes(clean.clickCount)) throw new InputError('点击次数无效。');
+    if (![1, 2, 3].includes(clean.clickCount)) throw new InputError('点击次数无效。');
+  }
+  if ((input.action === 'mousedown' || input.action === 'mouseup') && input.clickCount !== undefined) {
+    if (![1, 2, 3].includes(input.clickCount)) throw new InputError('点击次数无效。');
+    clean.clickCount = input.clickCount;
   }
   if (input.action === 'wheel') {
     if (![input.deltaX, input.deltaY].every(v => Number.isFinite(v) && Math.abs(v) <= 4000)) {
@@ -480,14 +484,14 @@ export async function dispatchScreencastInput(tab, command, fallbackViewport, fr
   if (command.action === 'mousedown') {
     const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
     await tab.page.mouse.move(x, y);
-    await tab.page.mouse.down({ button: command.button });
+    await tab.page.mouse.down({ button: command.button, clickCount: command.clickCount ?? 1 });
   } else if (command.action === 'mousemove') {
     const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
     await tab.page.mouse.move(x, y);
   } else if (command.action === 'mouseup') {
     const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
     await tab.page.mouse.move(x, y);
-    await tab.page.mouse.up({ button: command.button });
+    await tab.page.mouse.up({ button: command.button, clickCount: command.clickCount ?? 1 });
   } else if (command.action === 'click') {
     const { x, y } = resolveScreencastPoint(command, vp, frameMetrics);
     await tab.page.mouse.click(x, y, {
@@ -511,7 +515,11 @@ export async function dispatchScreencastInput(tab, command, fallbackViewport, fr
   } else if (command.action === 'text') {
     await tab.page.keyboard.insertText(command.value);
   } else if (command.action === 'key') {
-    await tab.page.keyboard.press([...command.modifiers, command.key].join('+'));
+    const modifiers = process.platform !== 'darwin' && command.modifiers.includes('Meta')
+      && !command.modifiers.includes('Control') && /^[acvxyz]$/i.test(command.key)
+      ? command.modifiers.map(m => (m === 'Meta' ? 'Control' : m))
+      : command.modifiers;
+    await tab.page.keyboard.press([...modifiers, command.key].join('+'));
   }
   return { ok: true };
 }

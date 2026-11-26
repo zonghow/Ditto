@@ -53,11 +53,43 @@ export function performScreencastInput(browser, id, input) {
   return operation;
 }
 
+function normalizeRemoteKeyModifiers(key, modifiers) {
+  if (process.platform !== 'darwin' && modifiers.includes('Meta') && !modifiers.includes('Control') && /^[acvxyz]$/i.test(key)) {
+    return modifiers.map(m => (m === 'Meta' ? 'Control' : m));
+  }
+  return modifiers;
+}
+
+async function dispatchMouseClick(page, x, y, button, clickCount) {
+  if (clickCount >= 2) {
+    // Viewer already dispatched prior clicks in the multi-click sequence;
+    // emit a single down/up with the exact clickCount so Chromium triggers
+    // word/paragraph selection reliably without replaying earlier clicks.
+    await page.mouse.move(x, y);
+    await page.mouse.down({ button, clickCount });
+    await page.mouse.up({ button, clickCount });
+    return;
+  }
+  await page.mouse.click(x, y, { button, clickCount });
+}
+
 export function performControl(browser, id, input) {
   const command = validateControl(input);
   // Hover and trackpad momentum wheel ticks must never backlog ahead of clicks
   // or trigger noisy 429 errors during smooth scrolling.
-  if (command.action === 'move' && browser.controlBacklog) return Promise.resolve({ ok: true, skipped: true });
+  if (command.action === 'move' && !command.dragging && browser.controlBacklog) return Promise.resolve({ ok: true, skipped: true });
+  if (command.action === 'move' && command.dragging && browser.queuedControlMove &&
+    browser.queuedControlMove.tabId === command.tabId && browser.queuedControlMove.documentId === command.documentId) {
+    browser.queuedControlMove.nodeId = command.nodeId;
+    browser.queuedControlMove.framePath = command.framePath;
+    browser.queuedControlMove.offsetX = command.offsetX;
+    browser.queuedControlMove.offsetY = command.offsetY;
+    if (command.viewportX !== undefined && command.viewportY !== undefined) {
+      browser.queuedControlMove.viewportX = command.viewportX;
+      browser.queuedControlMove.viewportY = command.viewportY;
+    }
+    return Promise.resolve({ ok: true, coalesced: true });
+  }
   if (command.action === 'wheel' && browser.queuedWheel &&
     !browser.queuedWheel.screencast &&
     browser.queuedWheel.tabId === command.tabId && browser.queuedWheel.documentId === command.documentId) {
@@ -77,12 +109,16 @@ export function performControl(browser, id, input) {
     throw new InputError('远端操作正在处理中，请稍后重试。', 429);
   }
   browser.controlBacklog++;
+  if (command.action === 'move' && command.dragging) browser.queuedControlMove = command;
+  else browser.queuedControlMove = null;
   if (command.action === 'wheel') browser.queuedWheel = command;
   const operation = browser.controlQueue.then(() => {
     if (browser.queuedWheel === command) browser.queuedWheel = null;
+    if (browser.queuedControlMove === command) browser.queuedControlMove = null;
     return browser.dispatchControl(id, 0, command);
   }).finally(() => {
     if (browser.queuedWheel === command) browser.queuedWheel = null;
+    if (browser.queuedControlMove === command) browser.queuedControlMove = null;
     browser.controlBacklog--;
   });
   browser.controlQueue = operation.catch(() => {});
@@ -125,9 +161,29 @@ export async function dispatchControl(browser, id, _revision, command) {
     }
   }
 
+  // Direct viewport fast-path for active drag move & mouseup so dragging across
+  // text blocks, whitespace, or edges stays fluid and never leaves the mouse stuck.
+  if (((command.action === 'move' && command.dragging) || command.action === 'mouseup')
+    && command.viewportX !== undefined && command.viewportY !== undefined) {
+    try {
+      const vp = tab.page.viewportSize() || browser.viewport;
+      const x = Math.min(Math.max(0, vp.width - 1), Math.max(0, command.viewportX * vp.width));
+      const y = Math.min(Math.max(0, vp.height - 1), Math.max(0, command.viewportY * vp.height));
+      if (!browser.ready || browser.importing) throw new InputError('浏览器正在启动或导入登录态。', 409);
+      await tab.page.mouse.move(x, y);
+      if (command.action === 'mouseup') {
+        await tab.page.mouse.up({ button: command.button, clickCount: command.clickCount ?? 1 });
+      }
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof InputError) throw error;
+      throw new InputError('页面变化导致操作未完成，请等待最新回放再重试。', 409);
+    }
+  }
+
   // Fast path for main-frame pointer actions: collapse 6+ Playwright IPC
   // round-trips into a single page.evaluate for low-latency hover/scroll/click.
-  if (command.framePath.length === 0 && ['click', 'move', 'wheel'].includes(command.action)) {
+  if (command.framePath.length === 0 && ['click', 'mousedown', 'mouseup', 'move', 'wheel'].includes(command.action)) {
     try {
       const vp = tab.page.viewportSize() || browser.viewport;
       const resolved = await tab.page.evaluate(({ key, docId, nodeId, offsetX, offsetY, checkHit, vpW, vpH }) => {
@@ -160,7 +216,7 @@ export async function dispatchControl(browser, id, _revision, command) {
         nodeId: command.nodeId,
         offsetX: command.offsetX,
         offsetY: command.offsetY,
-        checkHit: command.action === 'click',
+        checkHit: command.action === 'click' || command.action === 'mousedown',
         vpW: vp.width,
         vpH: vp.height,
       });
@@ -168,7 +224,14 @@ export async function dispatchControl(browser, id, _revision, command) {
       if (!browser.ready || browser.importing) throw new InputError('浏览器正在启动或导入登录态。', 409);
       if (command.action === 'click') {
         await tab.page.bringToFront();
-        await tab.page.mouse.click(resolved.x, resolved.y, { button: command.button, clickCount: command.clickCount });
+        await dispatchMouseClick(tab.page, resolved.x, resolved.y, command.button, command.clickCount);
+      } else if (command.action === 'mousedown') {
+        await tab.page.bringToFront();
+        await tab.page.mouse.move(resolved.x, resolved.y);
+        await tab.page.mouse.down({ button: command.button, clickCount: command.clickCount ?? 1 });
+      } else if (command.action === 'mouseup') {
+        await tab.page.mouse.move(resolved.x, resolved.y);
+        await tab.page.mouse.up({ button: command.button, clickCount: command.clickCount ?? 1 });
       } else if (command.action === 'move') {
         await tab.page.mouse.move(resolved.x, resolved.y);
       } else if (tab.cdp) {
@@ -220,15 +283,15 @@ export async function dispatchControl(browser, id, _revision, command) {
       element = handle.asElement();
       if (!element || await element.ownerFrame() !== frame) throw new InputError('目标 frame 已变化。', 409);
     }
-    if (['click', 'input', 'select', 'text', 'key'].includes(command.action)) await tab.page.bringToFront();
-    if (['click', 'move', 'wheel'].includes(command.action)) {
+    if (['click', 'mousedown', 'input', 'select', 'text', 'key'].includes(command.action)) await tab.page.bringToFront();
+    if (['click', 'mousedown', 'mouseup', 'move', 'wheel'].includes(command.action)) {
       const box = await element.boundingBox();
       if (!box || box.width < 1 || box.height < 1) throw new InputError('目标节点不可见。', 409);
       const point = { x: box.x + command.offsetX * box.width, y: box.y + command.offsetY * box.height };
       const viewport = tab.page.viewportSize() || browser.viewport;
       if (point.x < 0 || point.y < 0 || point.x >= viewport.width || point.y >= viewport.height) throw new InputError('目标不在远端视口中。', 409);
       if (!browser.ready || browser.importing) throw new InputError('浏览器正在启动或导入登录态。', 409);
-      if (command.action === 'click') {
+      if (command.action === 'click' || command.action === 'mousedown') {
         const hitMatches = await element.evaluate((node, offset) => {
           const rect = node.getBoundingClientRect();
           let hit = node.ownerDocument.elementFromPoint(rect.left + rect.width * offset.x, rect.top + rect.height * offset.y);
@@ -241,8 +304,14 @@ export async function dispatchControl(browser, id, _revision, command) {
         }, { x: command.offsetX, y: command.offsetY });
         if (!hitMatches) throw new InputError('目标已被其他内容遮挡，已丢弃这次点击。', 409);
       }
-      if (command.action === 'click') await tab.page.mouse.click(point.x, point.y, { button: command.button, clickCount: command.clickCount });
-      else if (command.action === 'move') await tab.page.mouse.move(point.x, point.y);
+      if (command.action === 'click') await dispatchMouseClick(tab.page, point.x, point.y, command.button, command.clickCount);
+      else if (command.action === 'mousedown') {
+        await tab.page.mouse.move(point.x, point.y);
+        await tab.page.mouse.down({ button: command.button, clickCount: command.clickCount ?? 1 });
+      } else if (command.action === 'mouseup') {
+        await tab.page.mouse.move(point.x, point.y);
+        await tab.page.mouse.up({ button: command.button, clickCount: command.clickCount ?? 1 });
+      } else if (command.action === 'move') await tab.page.mouse.move(point.x, point.y);
       else if (tab.cdp) {
         await tab.cdp.send('Input.dispatchMouseEvent', {
           type: 'mouseWheel',
@@ -281,7 +350,8 @@ export async function dispatchControl(browser, id, _revision, command) {
           node.focus?.();
         }
       }).catch(() => {});
-      await tab.page.keyboard.press([...command.modifiers, command.key].join('+'));
+      const modifiers = normalizeRemoteKeyModifiers(command.key, command.modifiers);
+      await tab.page.keyboard.press([...modifiers, command.key].join('+'));
     }
     return { ok: true };
   } catch (error) {
@@ -291,16 +361,33 @@ export async function dispatchControl(browser, id, _revision, command) {
 }
 
 export async function getSelectionText(browser, tabId) {
+  await browser.controlQueue?.catch?.(() => {});
   const tab = browser.tabs.get(tabId);
   if (!tab || tab.hidden || tab.page.isClosed() || tab.crashed) throw new InputError('这个远端标签页已关闭。', 404);
   const text = await tab.page.evaluate(() => {
-    const active = document.activeElement;
-    if (active && ['INPUT', 'TEXTAREA'].includes(active.tagName) && active.type !== 'password') {
-      const start = active.selectionStart ?? 0;
-      const end = active.selectionEnd ?? 0;
-      if (end > start) return active.value.slice(start, end).slice(0, 32768);
+    const readDoc = doc => {
+      if (!doc) return '';
+      const active = doc.activeElement;
+      if (active && ['INPUT', 'TEXTAREA'].includes(active.tagName) && active.type !== 'password') {
+        const start = active.selectionStart ?? 0;
+        const end = active.selectionEnd ?? 0;
+        if (end > start) return active.value.slice(start, end).slice(0, 32768);
+      }
+      const sel = String(doc.defaultView?.getSelection?.()?.toString() || '');
+      if (sel) return sel.slice(0, 32768);
+      return '';
+    };
+    const docs = [document];
+    for (let i = 0; i < docs.length && docs.length < 8; i++) {
+      const found = readDoc(docs[i]);
+      if (found) return found;
+      let frames;
+      try { frames = docs[i].querySelectorAll('iframe'); } catch { continue; }
+      for (const frame of frames) {
+        try { if (frame.contentDocument) docs.push(frame.contentDocument); } catch {}
+      }
     }
-    return String(window.getSelection?.()?.toString() || '').slice(0, 32768);
+    return '';
   }).catch(() => '');
   return { text };
 }

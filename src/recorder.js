@@ -252,6 +252,7 @@ function bootstrap(bindingName, instanceId, port) {
   const startRecord = () => {
     if (stopRecord || !state.active) return;
     lastXOriginKey = '';
+    lastInputSelKey = '';
     const options = { ...baseOptions };
     // Waiting for DOMContentLoaded only makes sense during the initial load. A
     // recorder started on an already loaded page must record immediately.
@@ -322,12 +323,29 @@ function bootstrap(bindingName, instanceId, port) {
     const id = state.mirrors?.nodeMirror.getId(event.composedPath()[0]);
     if (id > 0) { try { record.addCustomEvent('ditto-focus', { id }); } catch {} }
   };
+  let lastInputSelKey = '';
+  const onSelectionChange = () => {
+    if (!state.recording || !state.mirrors?.nodeMirror) return;
+    const active = document.activeElement;
+    if (!active || !['INPUT', 'TEXTAREA'].includes(active.tagName) || active.type === 'password' || active.type === 'hidden') return;
+    if (active.closest?.('[data-ditto-private]')) return;
+    const start = active.selectionStart;
+    const end = active.selectionEnd;
+    if (!Number.isInteger(start) || !Number.isInteger(end)) return;
+    const id = state.mirrors.nodeMirror.getId(active);
+    if (!(id > 0)) return;
+    const key = `${id}:${start}:${end}`;
+    if (key === lastInputSelKey) return;
+    lastInputSelKey = key;
+    try { record.addCustomEvent('ditto-input-selection', { id, start, end }); } catch {}
+  };
   const onShow = event => { if (event.persisted) state.checkpoint(); };
   const videoEvents = ['loadeddata', 'seeked', 'play', 'pause'];
   const canvasEvents = ['pointermove', 'pointerout', 'click'];
   for (const name of videoEvents) document.addEventListener(name, onVideoEvent, true);
   for (const name of canvasEvents) document.addEventListener(name, onCanvasInteract, { capture: true, passive: true });
   document.addEventListener('focusin', onFocus, true);
+  document.addEventListener('selectionchange', onSelectionChange, true);
   window.addEventListener('pageshow', onShow);
   state.stop = () => {
     clearInterval(canvasPollTimer);
@@ -342,6 +360,7 @@ function bootstrap(bindingName, instanceId, port) {
     for (const name of videoEvents) document.removeEventListener(name, onVideoEvent, true);
     for (const name of canvasEvents) document.removeEventListener(name, onCanvasInteract, true);
     document.removeEventListener('focusin', onFocus, true);
+    document.removeEventListener('selectionchange', onSelectionChange, true);
     window.removeEventListener('pageshow', onShow);
   };
 }

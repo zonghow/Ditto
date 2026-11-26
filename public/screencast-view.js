@@ -5,11 +5,12 @@ const SPECIAL_KEYS = new Set([
 ]);
 
 export class ScreencastView {
-  constructor({ container, canvas, send }) {
+  constructor({ container, canvas, send, onCopy = null }) {
     this.container = container;
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.send = send;
+    this.onCopy = onCopy;
     this.active = false;
     this.tabId = null;
     this.width = 1920;
@@ -17,6 +18,12 @@ export class ScreencastView {
     this.coordWidth = null;
     this.coordHeight = null;
     this.dragging = false;
+    this.dragClickCount = 1;
+    this.lastClickAt = 0;
+    this.lastClickX = 0;
+    this.lastClickY = 0;
+    this.lastClickButton = -1;
+    this.lastClickCount = 0;
     this.lastInputAt = 0;
     this.lastMove = 0;
     this.pendingMove = null;
@@ -118,10 +125,21 @@ export class ScreencastView {
       const pt = this.coords(event);
       if (!pt) return;
       this.clearPendingMove();
+      const now = performance.now();
+      const sameSpot = event.button === this.lastClickButton
+        && now - this.lastClickAt <= 500
+        && Math.hypot(event.clientX - this.lastClickX, event.clientY - this.lastClickY) <= 8;
+      const clickCount = sameSpot ? Math.min(3, this.lastClickCount + 1) : 1;
+      this.lastClickAt = now;
+      this.lastClickX = event.clientX;
+      this.lastClickY = event.clientY;
+      this.lastClickButton = event.button;
+      this.lastClickCount = clickCount;
+      this.dragClickCount = clickCount;
       this.dragging = true;
       this.lastInputAt = Date.now();
       try { this.canvas.setPointerCapture(event.pointerId); } catch {}
-      this.send({ type: 'screencast-input', tabId: this.tabId, action: 'mousedown', ...pt, button: this.buttonName(event.button) });
+      this.send({ type: 'screencast-input', tabId: this.tabId, action: 'mousedown', ...pt, button: this.buttonName(event.button), clickCount });
     });
     this.canvas.addEventListener('pointermove', event => {
       if (!this.active || !this.tabId) return;
@@ -156,7 +174,7 @@ export class ScreencastView {
       this.clearPendingMove();
       try { this.canvas.releasePointerCapture(event.pointerId); } catch {}
       const pt = this.coords(event);
-      if (pt) this.send({ type: 'screencast-input', tabId: this.tabId, action: 'mouseup', ...pt, button: this.buttonName(event.button) });
+      if (pt) this.send({ type: 'screencast-input', tabId: this.tabId, action: 'mouseup', ...pt, button: this.buttonName(event.button), clickCount: this.dragClickCount });
     };
     this.canvas.addEventListener('pointerup', endDrag);
     this.canvas.addEventListener('pointercancel', endDrag);
@@ -201,6 +219,24 @@ export class ScreencastView {
     }, { passive: false });
     this.canvas.addEventListener('keydown', event => {
       if (!this.active || !this.tabId || event.isComposing) return;
+      const isCopy = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c';
+      if (isCopy && this.onCopy) {
+        event.preventDefault();
+        this.lastInputAt = Date.now();
+        const modifiers = [];
+        if (event.ctrlKey) modifiers.push('Control');
+        if (event.metaKey) modifiers.push('Meta');
+        const tabId = this.tabId;
+        this.onCopy({
+          localText: '',
+          fallback: () => {
+            if (this.active && this.tabId === tabId) {
+              this.send({ type: 'screencast-input', tabId, action: 'key', key: 'c', modifiers });
+            }
+          },
+        });
+        return;
+      }
       const modified = event.ctrlKey || event.metaKey || event.altKey;
       const special = SPECIAL_KEYS.has(event.key);
       if (!special && !modified && event.key.length !== 1) return;

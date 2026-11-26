@@ -168,6 +168,7 @@ export function configuration(overrides = {}) {
     deviceScaleFactor: deviceScaleFactor(envValue('DITTO_DEVICE_SCALE_FACTOR'), file.deviceScaleFactor),
     screencastQuality: screencastQuality(envValue('DITTO_SCREENCAST_QUALITY'), file.screencastQuality),
     screencastRetina: parseBool(envValue('DITTO_SCREENCAST_RETINA'), file.screencastRetina, false),
+    restoreTabs: parseBool(envValue('DITTO_RESTORE_TABS'), file.restoreTabs, true),
     publicDir: path.join(projectRoot, 'public'),
     ...overrides,
     // Keep normalized/derived fields consistent when overrides passed dataDir/token.

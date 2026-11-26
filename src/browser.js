@@ -11,6 +11,7 @@ import { AssetCache } from './assets.js';
 import { ControlLease } from './control.js';
 import { recorderSource, RECORDER_BINDING, RECORDER_KEY } from './recorder.js';
 import { NativeTabOrder, orderedTabs } from './tab-order.js';
+import { SessionTabsStore } from './session-tabs.js';
 import { importSnapshotToBrowser } from './import-snapshot.js';
 import { ScreencastManager } from './screencast.js';
 import {
@@ -184,6 +185,11 @@ export class BrowserService extends EventEmitter {
     this.controlBacklog = 0;
     this.queuedWheel = null;
     this.queuedScreencastMove = null;
+    this.restoringTabs = false;
+    this.sessionTabsStore = (!config.attachCDP && config.restoreTabs !== false && config.dataDir)
+      ? new SessionTabsStore(config.dataDir, { port: config.port })
+      : null;
+    this.on('change', () => this.scheduleSessionTabsSave());
   }
 
   async start() {
@@ -278,9 +284,84 @@ export class BrowserService extends EventEmitter {
       await this.tabOrder.start(this.config.attachCDP || `http://127.0.0.1:${this.config.cdpPort}`).catch(() => {});
     }
     this.ready = true;
+    await this.restoreSessionTabs();
     this.timer = setInterval(() => this.tick(), 1500);
     this.timer.unref();
     this.emit('change', this.summary());
+  }
+
+  orderedVisibleTabs() {
+    return orderedTabs([...this.tabs.values()].filter(tab => !tab.hidden), this.tabOrder);
+  }
+
+  activeVisibleTabId(visibleTabs = this.orderedVisibleTabs()) {
+    return visibleTabs.find(tab => this.tabOrder?.get(tab.targetId)?.active)?.id || null;
+  }
+
+  scheduleSessionTabsSave(immediate = false) {
+    if (!this.sessionTabsStore || this.stopping || !this.ready || this.restoringTabs) return;
+    const visible = this.orderedVisibleTabs();
+    this.sessionTabsStore.update(visible, this.activeVisibleTabId(visible), { immediate });
+  }
+
+  async flushSessionTabs() {
+    if (!this.sessionTabsStore) return;
+    if (this.ready && !this.restoringTabs) {
+      const visible = this.orderedVisibleTabs();
+      this.sessionTabsStore.update(visible, this.activeVisibleTabId(visible), { immediate: true });
+    }
+    await this.sessionTabsStore.flush();
+  }
+
+  async restoreSessionTabs() {
+    if (!this.sessionTabsStore || !this.context) return;
+    const saved = await this.sessionTabsStore.load().catch(() => ({ activeIndex: 0, tabs: [] }));
+    if (!saved.tabs.length) return;
+    const initialPages = this.context.pages().filter(page => !page.isClosed() && !this.hiddenPages.has(page));
+    if (!initialPages.every(page => !page.url() || page.url() === 'about:blank')) return;
+
+    this.restoringTabs = true;
+    const restoredTabs = [];
+    try {
+      const reusableBlank = initialPages[0] || null;
+      const extraBlanks = initialPages.slice(1);
+      for (let i = 0; i < saved.tabs.length; i++) {
+        const item = saved.tabs[i];
+        const page = (i === 0 && reusableBlank && !reusableBlank.isClosed())
+          ? reusableBlank
+          : await this.context.newPage();
+        this.track(page);
+        const tab = [...this.tabs.values()].find(entry => entry.page === page);
+        if (!tab) continue;
+        tab.pendingRestoreUrl = item.url;
+        tab.url = item.url;
+        tab.title = item.title || item.url;
+        tab.loading = true;
+        restoredTabs.push({ tab, url: item.url });
+      }
+      for (const blank of extraBlanks) {
+        if (!blank.isClosed()) await blank.close().catch(() => {});
+      }
+      const activeEntry = restoredTabs[saved.activeIndex] || restoredTabs[0];
+      for (const { tab, url } of restoredTabs) {
+        tab.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
+          .catch(() => {})
+          .finally(() => {
+            tab.pendingRestoreUrl = null;
+            tab.loading = false;
+            if (!tab.page.isClosed()) {
+              this.refresh(tab, { refreshFavicon: true });
+              this.ensureRecorder(tab);
+            }
+          });
+      }
+      if (activeEntry?.tab?.page && !activeEntry.tab.page.isClosed()) {
+        await activeEntry.tab.page.bringToFront().catch(() => {});
+      }
+      await this.tabOrder?.refresh().catch(() => {});
+    } finally {
+      this.restoringTabs = false;
+    }
   }
 
   // Chromium 142+ enables Local Network Access (LNA) checks that block public-IP
@@ -839,6 +920,7 @@ export class BrowserService extends EventEmitter {
   async stop() {
     if (this.stopping) return;
     this.stopping = true;
+    await this.flushSessionTabs().catch(() => {});
     this.ready = false;
     clearInterval(this.timer);
     this.control.release();

@@ -768,6 +768,21 @@ try {
   await reopened.goto(origin);
   assert.equal(await reopened.locator('#boot').textContent(), 'remote-refreshed');
   checks.push('localStorage persists across Chromium restart');
+  // Verify open tabs persist and restore in order across service restarts
+  const secondRestored = await browser.context.newPage();
+  await secondRestored.goto(`${origin}/?restored=2`);
+  await assertEventually(() => browser.summary().tabs.some(t => t.url === `${origin}/?restored=2`), 4000);
+  const expectedBeforeRestart = browser.summary().tabs.map(t => t.url).filter(u => u && u !== 'about:blank');
+  assert.ok(expectedBeforeRestart.includes(`${origin}/`) && expectedBeforeRestart.includes(`${origin}/?restored=2`));
+  await browser.stop();
+  await browser.start();
+  await assertEventually(() => {
+    const urls = browser.summary().tabs.map(t => t.url);
+    return expectedBeforeRestart.every(u => urls.includes(u));
+  }, 8000);
+  const restoredUrls = browser.summary().tabs.map(t => t.url);
+  assert.deepEqual(restoredUrls, expectedBeforeRestart);
+  checks.push('open tabs persist and restore in order across service restart');
   console.log(JSON.stringify({ ok: true, checks }, null, 2));
 } catch (error) {
   console.error(`Integration failed after: ${checks.join('; ')}\n${error.message}`);

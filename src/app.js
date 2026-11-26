@@ -265,7 +265,10 @@ export function createApplication({ config, credentials, browser, sync, logger, 
   app.get('/api/downloads/:id', requireDashboard, (request, response) => {
     const item = browser.getDownload?.(request.params.id);
     if (!item) return response.status(404).json({ error: '下载文件不存在或已过期。' });
-    response.download(item.path, item.filename);
+    response.download(path.basename(item.path), item.filename, {
+      root: path.dirname(item.path),
+      dotfiles: 'allow',
+    });
   });
   app.get('/api/history', requireDashboard, async (request, response) => {
     const query = typeof request.query?.q === 'string' ? request.query.q.slice(0, 200) : '';
@@ -308,13 +311,14 @@ export function createApplication({ config, credentials, browser, sync, logger, 
     safeUrl,
   });
 
+  const rrwebDir = config.replayAssetDir || replayAssetDirectory;
   app.get('/vendor/rrweb/replay.js', (request, response) => {
     response.set('Cache-Control', 'private, max-age=3600');
-    response.sendFile(path.join(replayAssetDirectory, 'replay.js'));
+    response.sendFile('replay.js', { root: rrwebDir });
   });
   app.get('/vendor/rrweb/style.css', (request, response) => {
     response.set('Cache-Control', 'private, max-age=3600');
-    response.sendFile(path.join(replayAssetDirectory, 'style.css'));
+    response.sendFile('style.css', { root: rrwebDir });
   });
   app.get('/api/assets/:id', requireDashboard, async (request, response) => {
     if (!/^[a-f0-9]{36}$/.test(request.params.id)) throw new InputError('没有这个回放资源。', 404);

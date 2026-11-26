@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
@@ -451,4 +451,53 @@ test('unified token allows extension verify + WS handshake to mint viewer sessio
   }).then(r => r.json());
   assert.equal(splitVerify.ok, true);
   assert.equal(splitVerify.viewerSession, undefined);
+});
+
+test('vendor rrweb assets and downloads serve cleanly even when installed under dot-prefixed directories like .local', async t => {
+  const baseDir = await mkdtemp(path.join(process.env.DITTO_TEST_TEMP || os.tmpdir(), 'ditto-dotpath-'));
+  const dotRoot = path.join(baseDir, '.local', 'ditto');
+  const rrwebDir = path.join(dotRoot, 'rrweb');
+  const downloadsDir = path.join(dotRoot, 'downloads');
+  await mkdir(rrwebDir, { recursive: true });
+  await mkdir(downloadsDir, { recursive: true });
+  await writeFile(path.join(rrwebDir, 'replay.js'), 'window.__rrwebOk = true;\n');
+  await writeFile(path.join(rrwebDir, 'style.css'), '.rr-block{display:block}\n');
+  const dlFile = path.join(downloadsDir, 'dl1-report.txt');
+  await writeFile(dlFile, 'hello-dot-download');
+
+  const credentials = await loadCredentials(dotRoot);
+  const sync = new SyncStore(dotRoot);
+  await sync.load();
+  const browser = new EventEmitter();
+  Object.assign(browser, {
+    ready: true,
+    control: new ControlLease(),
+    assets: new AssetCache(),
+    summary: () => ({ ready: true, importing: false, tabs: [] }),
+    cachedRecordings: () => [],
+    setViewer() {},
+    removeViewer() {},
+    getDownload: id => (id === 'dl1' ? { id: 'dl1', path: dlFile, filename: 'report.txt' } : null),
+  });
+  const application = createApplication({
+    config: configuration({ port: 0, dataDir: dotRoot, replayAssetDir: rrwebDir }),
+    credentials,
+    sync,
+    browser,
+  });
+  await new Promise(resolve => application.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => application.close());
+  const base = `http://127.0.0.1:${application.server.address().port}`;
+
+  const jsRes = await fetch(`${base}/vendor/rrweb/replay.js`);
+  assert.equal(jsRes.status, 200);
+  assert.match(await jsRes.text(), /__rrwebOk/);
+
+  const cssRes = await fetch(`${base}/vendor/rrweb/style.css`);
+  assert.equal(cssRes.status, 200);
+  assert.match(await cssRes.text(), /\.rr-block/);
+
+  const dlRes = await fetch(`${base}/api/downloads/dl1`);
+  assert.equal(dlRes.status, 200);
+  assert.equal(await dlRes.text(), 'hello-dot-download');
 });

@@ -371,9 +371,12 @@ export async function getSelectionText(browser, tabId) {
       if (active && ['INPUT', 'TEXTAREA'].includes(active.tagName) && active.type !== 'password') {
         const start = active.selectionStart ?? 0;
         const end = active.selectionEnd ?? 0;
-        if (end > start) return active.value.slice(start, end).slice(0, 32768);
+        if (end > start) {
+          const val = active.value.slice(start, end).replace(/(?:\r?\n)+$/, '');
+          if (val) return val.slice(0, 32768);
+        }
       }
-      const sel = String(doc.defaultView?.getSelection?.()?.toString() || '');
+      const sel = String(doc.defaultView?.getSelection?.()?.toString() || '').replace(/(?:\r?\n)+$/, '');
       if (sel) return sel.slice(0, 32768);
       return '';
     };

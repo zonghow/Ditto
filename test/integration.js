@@ -410,7 +410,7 @@ try {
       };
     });
     await observer.keyboard.press(process.platform === 'darwin' ? 'Meta+c' : 'Control+c');
-    await observer.waitForFunction(() => (window.__copiedByShortcut || '').trim() === 'Alpha beta gamma delta epsilon zeta.', { timeout: 3000 });
+    await observer.waitForFunction(() => window.__copiedByShortcut === 'Alpha beta gamma delta epsilon zeta.', null, { timeout: 3000 });
     // Clicking blank area must clear BOTH remote selection AND replay highlight/selection
     const clearPadBox = await replay().locator('#clear-sel-pad').boundingBox();
     await observer.mouse.click(clearPadBox.x + 20, clearPadBox.y + 15);
@@ -832,7 +832,11 @@ try {
       p.id = 'sc-copy-block';
       p.style.cssText = 'position:fixed;left:420px;top:360px;margin:0;padding:8px 12px;background:#fff;color:#000;font:20px/1.4 sans-serif;z-index:2147483647;';
       p.textContent = 'Screencast triple click block text.';
-      document.body.append(p);
+      const p2 = document.createElement('p');
+      p2.id = 'sc-copy-next';
+      p2.style.cssText = 'position:fixed;left:420px;top:410px;margin:0;padding:8px 12px;background:#fff;color:#000;font:20px/1.4 sans-serif;z-index:2147483647;';
+      p2.textContent = 'Following paragraph.';
+      document.body.append(p, p2);
     });
     const remoteVp = observedTab.page.viewportSize();
     const scClickPt = await observer.evaluate(vp => {
@@ -861,8 +865,11 @@ try {
       };
     });
     await observer.keyboard.press(process.platform === 'darwin' ? 'Meta+c' : 'Control+c');
-    await observer.waitForFunction(() => (window.__copiedByShortcut || '').trim() === 'Screencast triple click block text.', null, { timeout: 4000 });
-    await observedTab.page.evaluate(() => document.getElementById('sc-copy-block')?.remove());
+    await observer.waitForFunction(() => window.__copiedByShortcut === 'Screencast triple click block text.', null, { timeout: 4000 });
+    await observedTab.page.evaluate(() => {
+      document.getElementById('sc-copy-block')?.remove();
+      document.getElementById('sc-copy-next')?.remove();
+    });
     await observer.locator('#drawer-toggle').click();
     await observer.locator('#control-drawer.open').waitFor({ state: 'visible' });
     await observer.locator('label.drawer-switch:has(#screencast-toggle)').click();

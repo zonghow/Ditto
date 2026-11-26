@@ -98,6 +98,18 @@ test('triple-click and drag-select dispatch cleanly with coalesced drag moves', 
     { type: 'down', button: 'left', clickCount: 3 },
     { type: 'up', button: 'left', clickCount: 3 },
   ]);
+
+  // getSelectionText strips Chromium's triple-click trailing newlines while preserving internal newlines
+  browser.tabs.get('tab').page.evaluate = async fn => {
+    const prevDoc = globalThis.document;
+    globalThis.document = {
+      activeElement: null,
+      defaultView: { getSelection: () => ({ toString: () => 'Line 1\n\nLine 2\n\n' }) },
+      querySelectorAll: () => [],
+    };
+    try { return fn(); } finally { globalThis.document = prevDoc; }
+  };
+  assert.deepEqual(await browser.getSelectionText('tab'), { text: 'Line 1\n\nLine 2' });
 });
 
 test('hover events do not backlog ahead of clicks on a busy remote page', async () => {

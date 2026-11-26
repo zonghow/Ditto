@@ -917,7 +917,8 @@ export class LiveReplay {
   getSelectedText() {
     for (const doc of this.collectReplayDocs()) {
       try {
-        const text = String(doc.getSelection?.()?.toString() || '');
+        const raw = String(doc.getSelection?.()?.toString() || '');
+        const text = raw.replace(/(?:\r?\n)+$/, '');
         if (text) return text.slice(0, 32768);
       } catch { /* ignore */ }
     }

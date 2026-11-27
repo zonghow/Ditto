@@ -145,14 +145,14 @@ ditto scroll down --tab e28c2282          # Scroll page or specific container (-
 ditto upload @e4 /path/file.png --tab e28c2282
 ditto wait --text "Done" --tab e28c2282   # Wait for selector / text / URL / --networkidle
 
-# Debug, handle dialogs & wrap up
+# Debug & handle dialogs (leave tabs open by default so users can inspect/continue in the console)
 ditto dialog accept --tab e28c2282        # Accept / dismiss alert, confirm, prompt
 ditto console --tab e28c2282              # Recent console logs & uncaught page errors
 ditto network --tab e28c2282              # Failed HTTP requests (--all for every request)
 ditto eval "document.title" --tab e28c2282
 ditto sync --tab e28c2282                 # Force re-sync fresh login state from laptop & reload
 ditto screenshot /tmp/page.png --tab e28c2282
-ditto close --tab e28c2282
+# ditto close --tab e28c2282              # Only close when explicitly asked or cleaning up temp tabs
 ```
 
 ---
